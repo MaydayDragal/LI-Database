@@ -97,9 +97,9 @@ not share or upload any documents.
   `LI54.21-P-080326_3 Vehicle handover cannot be performed.pdf`.
 - **Bulk export** — select rows (or none = all shown) and **⬇ Export renamed (ZIP)** to get a
   ZIP of correctly-named PDFs.
-- **Scanned PDFs** — if a file has no text layer, tick **"Run OCR on scanned PDFs"** at import
-  time to read it with OCR (slower; needs internet the first time to fetch the OCR engine,
-  then it's cached).
+- **Scanned PDFs** — files with no text layer are **read with OCR automatically** at import
+  time (slower than text files; needs internet the first time to fetch the OCR engine, then
+  it's cached — and cached by the service worker too when run as a hosted PWA).
 
 ## Backups (important)
 
