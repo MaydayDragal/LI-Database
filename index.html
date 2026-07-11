@@ -474,7 +474,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         return { text: txt.replace(/\s+/g, " ").trim(), h: r.h, y: r.y };
       });
   }
-  function joinHyphen(arr) { var out = ""; arr.forEach(function (t, i) { if (i === 0) { out = t; return; } if (/[-‐‑]$/.test(out)) out = out.replace(/[-‐‑]\s*$/, "") + t; else out += " " + t; }); return out; }
+  // Join wrapped lines, rejoining a word hyphenated across the break ("ACTI-" +
+  // "VE" -> "ACTIVE") but leaving a real trailing hyphen in a code intact
+  // (letter-hyphen followed by a letter is a soft wrap; "N10-" + "1" is not).
+  function joinHyphen(arr) { var out = ""; arr.forEach(function (t, i) { if (i === 0) { out = t; return; } if (/[A-Za-z][-‐‑]$/.test(out) && /^[A-Za-z]/.test(t)) out = out.replace(/[-‐‑]\s*$/, "") + t; else out += " " + t; }); return out; }
   // "xentry" only as a standalone letterhead ("XENTRY", "XENTRY Tips",
   // "XENTRY Diagnosis") — NOT a real title that merely starts with the word
   // Xentry (e.g. "Xentry Battery Tester results disagree with…").
@@ -508,7 +511,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   // on the analog clock cannot be altered") being taken as the Date field.
   var DATE_VAL = /\d{1,4}[.\/-]\d{1,2}([.\/-]\d{1,4})?/;
   // Present numeric dates with "/" separators (e.g. 03-17-2015 -> 03/17/2015).
-  function normDate(v) { return DATE_VAL.test(v) ? v.replace(/(\d)[-.](\d)/g, "$1/$2") : v; }
+  function normDate(v) { return DATE_VAL.test(v) ? v.replace(/(\d)[-.](?=\d)/g, "$1/") : v; }
   function fieldFromLines(lines, re, multi, valid) {
     for (var i = 0; i < lines.length; i++) {
       if (!re.test(lines[i].text)) continue;
@@ -585,6 +588,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           return w.recognize(c).then(function (r) {
             text += (r.data.text || "") + "\n";
             (r.data.lines || []).forEach(function (ln) { var s = (ln.text || "").replace(/\s+/g, " ").trim(); if (s) lines.push({ text: s, h: ln.bbox ? ln.bbox.y1 - ln.bbox.y0 : 0, y: ln.bbox ? ln.bbox.y0 : 0 }); });
+            c.width = c.height = 0; // release the (large, scale-3) canvas promptly
             i++; return step();
           });
         });
@@ -657,12 +661,18 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   }
   function tx(stores, mode) { return DB.transaction(stores, mode); }
   function reqP(req) { return new Promise(function (res, rej) { req.onsuccess = function () { res(req.result); }; req.onerror = function () { rej(req.error); }; }); }
-  function putDoc(meta, blob) { var t = tx(["docs", "files"], "readwrite"); t.objectStore("docs").put(meta); if (blob) t.objectStore("files").put({ id: meta.id, blob: blob }); return new Promise(function (res, rej) { t.oncomplete = res; t.onerror = function () { rej(t.error); }; }); }
+  // Settle a transaction promise on complete/error/abort — an abort that fires
+  // no bubbling request error must still reject, or the caller would hang.
+  function txDone(t) { return new Promise(function (res, rej) { t.oncomplete = function () { res(); }; t.onerror = function () { rej(t.error || new Error("transaction error")); }; t.onabort = function () { rej(t.error || new Error("transaction aborted")); }; }); }
+  function putDoc(meta, blob) { return new Promise(function (res, rej) { try { var t = tx(["docs", "files"], "readwrite"); t.objectStore("docs").put(meta); if (blob) t.objectStore("files").put({ id: meta.id, blob: blob }); txDone(t).then(res, rej); } catch (e) { rej(e); } }); }
+  // Atomically write a (possibly re-id'd) doc and remove the old record + file
+  // in a single transaction, so a corrected LI/version can't orphan its blob.
+  function migrateDoc(oldId, meta, blob) { return new Promise(function (res, rej) { try { var t = tx(["docs", "files"], "readwrite"); t.objectStore("docs").put(meta); if (blob) t.objectStore("files").put({ id: meta.id, blob: blob }); if (oldId !== meta.id) { t.objectStore("docs").delete(oldId); t.objectStore("files").delete(oldId); } txDone(t).then(res, rej); } catch (e) { rej(e); } }); }
   function allDocs() { return reqP(tx(["docs"], "readonly").objectStore("docs").getAll()); }
   function getFile(id) { return reqP(tx(["files"], "readonly").objectStore("files").get(id)).then(function (r) { return r ? r.blob : null; }); }
-  function delDoc(id) { var t = tx(["docs", "files"], "readwrite"); t.objectStore("docs").delete(id); t.objectStore("files").delete(id); return new Promise(function (res, rej) { t.oncomplete = res; t.onerror = function () { rej(t.error); }; }); }
+  function delDoc(id) { return new Promise(function (res, rej) { try { var t = tx(["docs", "files"], "readwrite"); t.objectStore("docs").delete(id); t.objectStore("files").delete(id); txDone(t).then(res, rej); } catch (e) { rej(e); } }); }
   function getSetting(k) { return reqP(tx(["settings"], "readonly").objectStore("settings").get(k)).then(function (r) { return r ? r.v : null; }); }
-  function putSetting(k, v) { return new Promise(function (res, rej) { try { var t = tx(["settings"], "readwrite"); t.objectStore("settings").put({ k: k, v: v }); t.oncomplete = res; t.onerror = function () { rej(t.error); }; } catch (e) { rej(e); } }); }
+  function putSetting(k, v) { return new Promise(function (res, rej) { try { var t = tx(["settings"], "readwrite"); t.objectStore("settings").put({ k: k, v: v }); txDone(t).then(res, rej); } catch (e) { rej(e); } }); }
   function delSetting(k) { var t = tx(["settings"], "readwrite"); t.objectStore("settings").delete(k); return new Promise(function (res) { t.oncomplete = res; t.onerror = res; }); }
   function estimate() { return navigator.storage && navigator.storage.estimate ? navigator.storage.estimate() : Promise.resolve(null); }
 
@@ -781,9 +791,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   });
   function toggleStar(key) {
     var g = groupsByKey[key]; if (!g) return;
-    var on = !isStarred(g);
+    var on = !isStarred(g), was = g.versions.map(function (v) { return !!v.star; });
     g.versions.forEach(function (v) { v.star = on; });
-    Promise.all(g.versions.map(function (v) { return putDoc(v, null); })).then(function () { applyView(); updDStar(); scheduleAutosave(); });
+    applyView(); updDStar();
+    Promise.all(g.versions.map(function (v) { return putDoc(v, null); }))
+      .then(function () { scheduleAutosave(); }, function () {
+        g.versions.forEach(function (v, i) { v.star = was[i]; }); // revert on write failure
+        applyView(); updDStar(); toast("Couldn't save the star — storage may be full.");
+      });
   }
   $("starFilter").addEventListener("click", function () {
     starOnly = !starOnly;
@@ -805,7 +820,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     var keys = Object.keys(selected); if (!keys.length) { toast("No documents selected."); return; }
     var ids = []; keys.forEach(function (k) { var g = groupsByKey[k]; if (g) g.versions.forEach(function (v) { ids.push(v.id); }); });
     if (!confirm("Delete " + keys.length + " document(s) (" + ids.length + " file(s)) from the database?")) return;
-    Promise.all(ids.map(delDoc)).then(function () { selected = {}; return refresh(); }).then(function () { toast("Deleted."); scheduleAutosave(); });
+    var fails = 0;
+    // Tolerate an individual failed delete so one error can't skip the refresh
+    // and leave docs[] out of sync with storage.
+    Promise.all(ids.map(function (id) { return delDoc(id).catch(function () { fails++; }); }))
+      .then(function () { selected = {}; return refresh(); })
+      .then(function () { toast(fails ? ("Deleted, but " + fails + " item(s) failed.") : "Deleted."); scheduleAutosave(); });
   });
 
   // ---------- detail modal (versions + compare) ----------
@@ -891,21 +911,26 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   ["dLi", "dVer", "dTitleIn", "dReason", "dFg", "dDate", "dValid"].forEach(function (id) { $(id).addEventListener("input", function () { dDirty = true; }); });
   $("dSave").addEventListener("click", function () {
     if (!curDoc) return; var e = collectDetail();
-    var ed = curDoc.edited || {};
-    ["li", "ver", "title", "reason", "fgroup", "date", "validity"].forEach(function (k) { if (String(curDoc[k] || "") !== String(e[k] || "")) ed[k] = 1; });
+    // Snapshot so a failed write can be rolled back (keeps docs[] consistent
+    // with what's actually stored, and doesn't silently drop the user's edits).
+    var FIELDS = ["li", "ver", "title", "reason", "fgroup", "date", "validity"];
+    var snap = { id: curDoc.id }; FIELDS.forEach(function (k) { snap[k] = curDoc[k]; }); snap.edited = curDoc.edited;
+    var ed = {}; var prevEd = curDoc.edited || {}; for (var pk in prevEd) ed[pk] = prevEd[pk];
+    FIELDS.forEach(function (k) { if (String(curDoc[k] || "") !== String(e[k] || "")) ed[k] = 1; });
     curDoc.edited = ed;
     curDoc.li = e.li; curDoc.ver = e.ver; curDoc.title = e.title; curDoc.reason = e.reason; curDoc.fgroup = e.fgroup; curDoc.date = e.date; curDoc.validity = e.validity;
     // the record id encodes LI+version — migrate it when they change, so
     // re-imports dedupe against the corrected values, not the old ones
-    var oldId = curDoc.id, newId = curDoc.li ? (curDoc.li + "_" + (curDoc.ver || "0")) : oldId;
+    var oldId = snap.id, newId = curDoc.li ? (curDoc.li + "_" + (curDoc.ver || "0")) : oldId;
     var save;
     if (newId !== oldId && !docs.some(function (d) { return d.id === newId; })) {
-      save = getFile(oldId).then(function (blob) { curDoc.id = newId; return putDoc(curDoc, blob); }).then(function () { return delDoc(oldId); });
+      save = getFile(oldId).then(function (blob) { curDoc.id = newId; return migrateDoc(oldId, curDoc, blob); });
     } else {
       save = putDoc(curDoc, null);
     }
     save.then(function () {
       dDirty = false;
+      setHash(curDoc.li || ""); // keep the permalink pointing at the new LI
       applyView(); updateStore();
       var key = curDoc.li ? "li:" + curDoc.li : "id:" + curDoc.id;
       curGroup = groupsByKey[key] || curGroup;
@@ -920,6 +945,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       $("dTitle").textContent = (curDoc.li || curDoc.filename || "Document") + (curDoc.ver ? " · v" + curDoc.ver : "");
       updDStar();
       toast("Saved."); scheduleAutosave();
+    }).catch(function () {
+      // Roll back the in-memory record so docs[] matches storage (nothing was
+      // committed — the migration is atomic), but leave the form inputs alone so
+      // the user's typed edits stay visible to retry.
+      curDoc.id = snap.id; FIELDS.forEach(function (k) { curDoc[k] = snap[k]; }); curDoc.edited = snap.edited;
+      dDirty = true;
+      toast("Couldn't save — storage may be full. Your changes are still shown; try again.");
     });
   });
   // Blobs restored from a .lidb backup come back through JSZip without a MIME
@@ -939,16 +971,26 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (!blob) return false;
       var shim = { arrayBuffer: function () { return blob.arrayBuffer(); }, name: d.filename || "", size: d.size || blob.size };
       return extract(shim, worker).then(function (m) {
-        var ed = d.edited || {};
-        ["li", "ver"].forEach(function (k) { if (!ed[k] && m[k] && !d[k]) d[k] = m[k]; });
-        ["title", "reason", "fgroup", "date", "validity"].forEach(function (k) { if (!ed[k]) d[k] = m[k]; });
-        d.text = m.text; d.pages = m.pages || 0; d.noText = m.noText; d.err = !!m.err;
+        // Don't let a re-read that produced nothing (e.g. a scanned doc re-read
+        // while OCR is unavailable) wipe fields/text we already had. Only refresh
+        // when the new parse yielded real text, or when there was nothing before.
+        var gotText = !!(m.text && m.text.replace(/\s+/g, "").length);
+        if (gotText || !(d.text && d.text.replace(/\s+/g, "").length)) {
+          var ed = d.edited || {};
+          ["li", "ver"].forEach(function (k) { if (!ed[k] && m[k] && !d[k]) d[k] = m[k]; });
+          ["title", "reason", "fgroup", "date", "validity"].forEach(function (k) { if (!ed[k]) d[k] = m[k]; });
+          d.text = m.text; d.pages = m.pages || 0; d.noText = m.noText; d.err = !!m.err;
+        }
         return putDoc(d, null).then(function () { return true; });
       });
     });
   }
   $("dReread").addEventListener("click", function () {
     if (!curDoc) return;
+    // Hold the import mutex so a concurrent import/re-read-all can't call
+    // tessFreeAll() and terminate this re-read's live OCR worker mid-recognize.
+    if (importing) { toast("Busy — wait for the current operation to finish."); return; }
+    importing = true;
     var d = curDoc;
     toast("Re-reading PDF…");
     rereadDoc(d).then(function (ok) {
@@ -956,7 +998,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (curDoc === d) loadVersion(curVerIdx);
       applyView(); updateStore(); scheduleAutosave();
       toast("Re-read complete — fields refreshed.");
-    }).catch(function () { toast("Couldn't re-read this PDF."); });
+    }, function () { toast("Couldn't re-read this PDF."); }).then(function () { tessFreeAll(); importing = false; });
   });
   // Re-run the parser over every stored PDF (keeps hand-edited fields), across
   // the worker pool. Useful after the extractor improves.
@@ -1455,7 +1497,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   function openFromHash() {
     var h = (location.hash || "").replace(/^#/, ""); if (!h) return;
     try { h = decodeURIComponent(h); } catch (e) {}
-    if (groupsByKey["li:" + h] && (!curGroup || curGroup.key !== "li:" + h)) openDetail("li:" + h);
+    if (!groupsByKey["li:" + h] || (curGroup && curGroup.key === "li:" + h)) return;
+    // Don't silently discard unsaved edits when a link is pasted mid-edit.
+    if (dDirty && !confirm("Discard unsaved changes to this document?")) { setHash(curGroup ? (curGroup.li || "") : ""); return; }
+    dDirty = false; navStack = [];
+    openDetail("li:" + h);
   }
   // React to a link pasted/opened while the app is already running. Our own
   // URL updates use replaceState, which doesn't fire this — so no loop.
@@ -1608,6 +1654,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       try { pdfWorkers.push(new pdfjsLib.PDFWorker({ name: "li-pdf-" + pdfWorkers.length })); }
       catch (e) { break; }
     }
+    // If no dedicated workers could be created (e.g. a strict CSP that blocks
+    // blob: workers), return a single null "lane" so the import still runs on
+    // the shared / main-thread fallback worker instead of silently doing nothing.
+    if (!pdfWorkers.length) return [null];
     return pdfWorkers.slice(0, Math.max(1, Math.min(n, pdfWorkers.length)));
   }
 
@@ -1633,10 +1683,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (err) { failed++; if (err.name === "QuotaExceededError") { quota = true; aborted = true; } return; }
         var id = m.li ? (m.li + "_" + (m.ver || "0")) : ("file:" + f.name + ":" + f.size);
         var prev = null; docs.forEach(function (d) { if (d.id === id) prev = d; });
-        var meta = { id: id, li: m.li, ver: m.ver, title: m.title, reason: m.reason, fgroup: m.fgroup, date: m.date, validity: m.validity, text: m.text, pages: m.pages || 0, filename: f.name, size: f.size, noText: m.noText, err: !!m.err, star: !!(prev && prev.star), added: Date.now() };
-        // re-importing the same file must not wipe manual corrections —
-        // keep the previous entry's non-empty fields (text/blob refresh)
-        if (prev && prev.filename === f.name) {
+        var meta = { id: id, li: m.li, ver: m.ver, title: m.title, reason: m.reason, fgroup: m.fgroup, date: m.date, validity: m.validity, text: m.text, pages: m.pages || 0, filename: f.name, size: f.size, mtime: f.lastModified || 0, noText: m.noText, err: !!m.err, star: !!(prev && prev.star), added: Date.now() };
+        // Re-importing the same LI+version must not wipe manual corrections —
+        // keep the previous entry's hand-edited fields regardless of the file's
+        // name (a re-download/rename shouldn't discard edits). Non-edited fields
+        // still refresh from the new parse.
+        if (prev) {
           var ed = prev.edited || {};
           ["title", "reason", "fgroup", "date", "validity"].forEach(function (k) { if (ed[k] && prev[k]) meta[k] = prev[k]; });
           if (prev.edited) meta.edited = prev.edited;
@@ -1673,6 +1725,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (failed) msg += " ⚠ " + failed + " file(s) failed" + (quota ? " — browser storage is full" : "") + ".";
         toast(msg); scheduleAutosave();
       });
+    }).catch(function (err) {
+      // Never leave the app wedged with importing=true on an unexpected error.
+      tessFreeAll(); importing = false;
+      $("impProg").style.display = "none";
+      refresh().then(function () { toast("Import stopped — " + ((err && err.message) || "unexpected error") + "."); });
     });
   }
 
@@ -1693,8 +1750,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   // ---------- backup / restore ----------
   function buildBackup() {
-    var list = docs.slice(); // snapshot — imports/deletes can mutate docs mid-backup
-    list.forEach(function (d, i2) { d.fname = d.id.replace(/[^A-Za-z0-9._-]/g, "_") + "__" + i2 + ".pdf"; });
+    // Clone each doc for the manifest so the backup-only "fname" field isn't
+    // written onto the live records in docs[] (which a later putDoc would then
+    // persist). Snapshot guards against imports/deletes mutating docs mid-backup.
+    var list = docs.map(function (d, i2) { var c = {}; for (var k in d) c[k] = d[k]; c.fname = d.id.replace(/[^A-Za-z0-9._-]/g, "_") + "__" + i2 + ".pdf"; return c; });
     var zip = new JSZip(); zip.file("manifest.json", JSON.stringify({ v: 1, docs: list }, null, 1));
     var folder = zip.folder("files"), i = 0;
     return new Promise(function (res, rej) {
@@ -1814,19 +1873,22 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       syncDir = h; putSetting("syncDir", h).catch(function () {}); syncLabel(); return h;
     }, function () { return null; });
   }
-  // Recursively gather .pdf file handles (bounded depth so a huge tree can't hang).
+  // Recursively gather .pdf file handles (bounded depth so a huge tree can't
+  // hang). One unreadable subfolder or a mid-scan error skips just that entry
+  // rather than aborting the whole sync; the count cap is enforced continuously.
   function collectPdfs(dir, out, depth) {
     out = out || []; depth = depth || 0;
-    if (depth > 8 || out.length > 20000) return Promise.resolve(out);
+    if (depth > 8) return Promise.resolve(out);
     var it = dir.values();
     function step() {
+      if (out.length > 20000) return out;
       return it.next().then(function (res) {
         if (res.done) return out;
         var entry = res.value;
         if (entry.kind === "file") { if (/\.pdf$/i.test(entry.name)) out.push(entry); return step(); }
-        if (entry.kind === "directory") return collectPdfs(entry, out, depth + 1).then(step);
+        if (entry.kind === "directory") return collectPdfs(entry, out, depth + 1).then(step, step);
         return step();
-      });
+      }, function () { return out; }); // iteration error on this dir — stop this branch, keep what we have
     }
     return step();
   }
@@ -1845,8 +1907,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (!ok) { toast("Couldn't access that folder — link it again."); syncDir = null; syncLabel(); return; }
       toast("Scanning “" + (syncDir.name || "folder") + "”…");
       return collectPdfs(syncDir, []).then(function (handles) {
-        // "Already imported" = a stored doc with the same filename + size.
-        var known = {}; docs.forEach(function (d) { known[d.filename + "|" + d.size] = 1; });
+        // A folder file counts as "new or changed" unless a stored doc has the
+        // same name, size AND modified-time. Docs imported before mtime was
+        // tracked fall back to name+size so they aren't all re-imported once.
+        var known = {}; docs.forEach(function (d) { known[d.filename] = { size: d.size, mtime: d.mtime }; });
         var files = [], i = 0;
         (function next() {
           if (i >= handles.length) {
@@ -1854,7 +1918,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             importFiles(files); // reuses dedupe + edit-preservation
             return;
           }
-          handles[i].getFile().then(function (f) { if (!known[f.name + "|" + f.size]) files.push(f); }, function () {}).then(function () { i++; next(); });
+          handles[i].getFile().then(function (f) {
+            var k = known[f.name];
+            var unchanged = k && k.size === f.size && (k.mtime == null || k.mtime === (f.lastModified || 0));
+            if (!unchanged) files.push(f);
+          }, function () {}).then(function () { i++; next(); });
         })();
       });
     }).catch(function () { toast("Folder sync failed."); });
