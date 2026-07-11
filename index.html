@@ -1691,6 +1691,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     importing = true;
     $("impProg").style.display = "block";
     var added = 0, updated = 0, failed = 0, quota = false, cursor = 0, done = 0, aborted = false;
+    // The progress bar lives in the import modal; when an import runs without it
+    // (folder sync), show progress as a toast instead so it isn't invisible.
+    var quiet = !$("importOverlay").classList.contains("show");
     // Process files concurrently, one PDF.js worker per lane. Scanned files that
     // need OCR borrow from the separate (smaller) OCR worker pool on demand.
     var pool = pdfPool(Math.min(arr.length, 8));
@@ -1703,6 +1706,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         done++;
         $("impBar").style.width = (done / arr.length * 100) + "%";
         $("impLabel").textContent = "Read " + done + " / " + arr.length;
+        if (quiet && arr.length > 1 && (done % 5 === 0 || done === arr.length)) toast("Importing… " + done + " / " + arr.length);
         if (err) { failed++; if (err.name === "QuotaExceededError") { quota = true; aborted = true; } return; }
         var id = m.li ? (m.li + "_" + (m.ver || "0")) : ("file:" + f.name + ":" + f.size);
         var prev = null; docs.forEach(function (d) { if (d.id === id) prev = d; });
