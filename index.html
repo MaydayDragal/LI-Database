@@ -47,7 +47,15 @@
   header.topbar h1 { font-size:17px; margin:0; letter-spacing:-0.01em; white-space:nowrap; }
   header.topbar .sub { color:var(--muted); font-size:12px; }
   header.topbar .spacer { flex:1; }
-  header.topbar .actions { display:flex; gap:8px; flex-wrap:wrap; }
+  header.topbar .actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .menu-wrap { position:relative; }
+  .menu-btn.attn { color:#f5c542; border-color:#f5c542; }
+  .menu { position:absolute; right:0; top:calc(100% + 6px); background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:6px; min-width:220px; box-shadow:0 12px 34px #0008; z-index:70; display:flex; flex-direction:column; gap:1px; }
+  .menu[hidden] { display:none; }
+  .menu-label { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); padding:6px 10px 3px; }
+  .menu-item { display:flex; align-items:center; gap:8px; width:100%; text-align:left; background:none; border:1px solid transparent; color:var(--text); font-size:13px; font-weight:600; padding:8px 10px; border-radius:7px; cursor:pointer; white-space:nowrap; }
+  .menu-item:hover { background:var(--panel); border-color:var(--border); }
+  .menu-sep { height:1px; background:var(--border); margin:5px 4px; }
 
   .toolbar { display:flex; align-items:center; gap:10px; padding:10px 18px; border-bottom:1px solid var(--border); background:var(--panel); flex:none; flex-wrap:wrap; }
   .search { flex:1; min-width:200px; display:flex; align-items:center; gap:8px; background:var(--panel-2); border:1px solid var(--border); border-radius:9px; padding:0 12px; }
@@ -168,11 +176,20 @@
   <div class="actions">
     <button class="btn btn-primary" id="importBtn">＋ Import PDFs</button>
     <button class="btn btn-ghost btn-sm" id="exportSelBtn">⬇ Export renamed (ZIP)</button>
-    <button class="btn btn-ghost btn-sm" id="syncBtn" title="Link a folder — one click imports any new or changed PDFs from it">📂 Sync folder</button>
-    <button class="btn btn-ghost btn-sm" id="autosaveBtn" title="Automatically save the database to a file you choose (e.g. on a flash drive) after every change">🔄 Auto-save: off</button>
-    <button class="btn btn-ghost btn-sm" id="backupBtn">💾 Backup</button>
-    <button class="btn btn-ghost btn-sm" id="restoreBtn">↥ Restore</button>
-    <button class="btn btn-ghost btn-sm" id="installBtn" title="Put an app icon on your desktop">📌 Install</button>
+    <div class="menu-wrap">
+      <button class="btn btn-ghost btn-sm menu-btn" id="menuBtn" title="Menu" aria-haspopup="true" aria-expanded="false">☰ Menu</button>
+      <div class="menu" id="appMenu" hidden role="menu">
+        <div class="menu-label">Files</div>
+        <button class="menu-item" id="syncBtn" title="Link a folder — one click imports any new or changed PDFs from it">📂 Sync folder</button>
+        <div class="menu-sep"></div>
+        <div class="menu-label">Save &amp; backup</div>
+        <button class="menu-item" id="autosaveBtn" title="Automatically save the database to a file you choose (e.g. on a flash drive) after every change">🔄 Auto-save: off</button>
+        <button class="menu-item" id="backupBtn">💾 Backup</button>
+        <button class="menu-item" id="restoreBtn">↥ Restore</button>
+        <div class="menu-sep" id="menuSepInstall"></div>
+        <button class="menu-item" id="installBtn" title="Put an app icon on your desktop">📌 Install</button>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -1478,12 +1495,25 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       return window.matchMedia("(display-mode: " + m + ")").matches;
     }));
   }
-  function updInstallBtn() { $("installBtn").style.display = isAppMode() ? "none" : ""; }
+  function updInstallBtn() { var hide = isAppMode(); $("installBtn").style.display = hide ? "none" : ""; $("menuSepInstall").style.display = hide ? "none" : ""; }
   updInstallBtn();
   if (window.matchMedia) ["standalone", "minimal-ui", "fullscreen"].forEach(function (m) {
     var mq = window.matchMedia("(display-mode: " + m + ")");
     (mq.addEventListener ? mq.addEventListener.bind(mq, "change") : mq.addListener.bind(mq))(updInstallBtn);
   });
+
+  // ---------- header overflow menu ----------
+  function closeMenu() { $("appMenu").hidden = true; $("menuBtn").setAttribute("aria-expanded", "false"); }
+  $("menuBtn").addEventListener("click", function (e) {
+    e.stopPropagation();
+    var willOpen = $("appMenu").hidden;
+    $("appMenu").hidden = !willOpen;
+    $("menuBtn").setAttribute("aria-expanded", String(willOpen));
+  });
+  // Choosing any item runs its own handler, then closes the menu.
+  $("appMenu").addEventListener("click", function () { closeMenu(); });
+  document.addEventListener("click", function (e) { if (!$("appMenu").hidden && !$("appMenu").contains(e.target) && e.target !== $("menuBtn")) closeMenu(); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !$("appMenu").hidden) closeMenu(); });
 
   // ---------- install as desktop app ----------
   // Windows .ico (16/32/48/256) of the app icon, for desktop shortcuts
@@ -1674,7 +1704,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   // ---------- auto-save to a chosen file (e.g. on a flash drive) ----------
   var asHandle = null, asOn = false, asTimer = 0, asBusy = false, asAgain = false, asFailed = false, asPending = false;
-  function asLabel(txt, cls) { var b = $("autosaveBtn"); b.textContent = txt; b.classList.toggle("on", cls === "on"); b.classList.toggle("warn", cls === "warn"); }
+  function asLabel(txt, cls) { var b = $("autosaveBtn"); b.textContent = txt; b.classList.toggle("on", cls === "on"); b.classList.toggle("warn", cls === "warn"); $("menuBtn").classList.toggle("attn", cls === "warn"); }
   function scheduleAutosave() { if (!asOn || !asHandle) return; asPending = true; clearTimeout(asTimer); asTimer = setTimeout(runAutosave, 1500); }
   function runAutosave() {
     if (!asOn || !asHandle) return;

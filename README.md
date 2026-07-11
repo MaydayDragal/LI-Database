@@ -124,7 +124,8 @@ not share or upload any documents.
 ## Backups (important)
 
 Your data lives in the browser's local storage for this file. It persists between sessions,
-but to be safe and portable:
+but to be safe and portable — the save/backup and install options all live under the **☰ Menu**
+in the top-right:
 
 - **🔄 Auto-save** — click it once and pick a location (a flash drive, a network share, your
   Documents folder…). From then on the whole database is **automatically written to that file
