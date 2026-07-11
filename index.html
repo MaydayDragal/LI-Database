@@ -702,27 +702,34 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     var msel = $("modelFilter"), mcur = msel.value; msel.innerHTML = '<option value="">All models</option>';
     Object.keys(mods).sort(function (a, b) { return (+a) - (+b); }).forEach(function (m) { var o = document.createElement("option"); o.value = m; o.textContent = "Model " + m; msel.appendChild(o); });
     msel.value = mcur;
-    if (msel.value !== mcur) { msel.value = ""; }
+    if (msel.value !== mcur) { msel.value = ""; applyView(); } // selected model gone — reset and refresh the view
   }
   // Model series a document applies to, parsed from its Validity field:
   // explicit "MODEL 166" / "Model series 221", plus bare comma-listed 3-digit
   // series ("118, 177, 247, …"). Codes (489, letter-suffixed like 101A) are
   // not comma-list members, so they're not picked up.
+  var _modelMemo = {}; // memoized by validity string — avoids re-parsing every row on each applyView
   function modelsOf(d) {
-    var s = d.validity || "", seen = {}, out = [], m;
+    var s = d.validity || "";
+    if (Object.prototype.hasOwnProperty.call(_modelMemo, s)) return _modelMemo[s];
+    var seen = {}, out = [], m;
     function add(k) { if (/^\d{3}$/.test(k) && !seen[k]) { seen[k] = 1; out.push(k); } }
     var re1 = /model(?:\s+series)?\s+(\d{3})\b/gi; while ((m = re1.exec(s))) add(m[1]);
     var re2 = /(?:^|,)\s*(\d{3})\s*(?=,|$)/g; while ((m = re2.exec(s))) add(m[1]);
+    _modelMemo[s] = out;
     return out;
   }
   function verNum(d) { return parseFloat(d.ver) || 0; }
-  // A sortable YYYYMMDD number from a date string. Handles US M/D/YY(YY)
-  // (the common form after normalization) and ISO YYYY/M/D; unparseable/empty
-  // dates sort together at the low end. 2-digit years pivot at 70 (→19xx/20xx).
+  // A sortable YYYYMMDD number from a date string. Handles ISO YYYY/M/D, US
+  // M/D/YY(YY) (the app's default), and day-first D/M/YYYY when the first field
+  // can't be a month (>12). Unparseable/empty dates sort together at the low
+  // end. 2-digit years pivot at 70 (→19xx/20xx).
   function dateVal(s) {
     var t = String(s || "").match(/\d+/g); if (!t || t.length < 3) return 0;
     var y, mo, d;
-    if (t[0].length === 4) { y = +t[0]; mo = +t[1]; d = +t[2]; } else { mo = +t[0]; d = +t[1]; y = +t[2]; }
+    if (t[0].length === 4) { y = +t[0]; mo = +t[1]; d = +t[2]; }
+    else if (+t[0] > 12) { d = +t[0]; mo = +t[1]; y = +t[2]; }
+    else { mo = +t[0]; d = +t[1]; y = +t[2]; }
     if (y < 100) y += (y < 70 ? 2000 : 1900);
     return y * 10000 + mo * 100 + d;
   }
@@ -780,7 +787,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     $("rows").innerHTML = html;
   }
   $("head").addEventListener("click", function (e) { var th = e.target.closest("th[data-c]"); if (!th) return; var c = th.getAttribute("data-c"); if (c === "sel") return; if (sortCol === c) sortDir = -sortDir; else { sortCol = c; sortDir = 1; } applyView(); });
-  $("search").addEventListener("input", applyView);
+  // Debounce search: a big library's full-text filter is heavy, so don't re-run
+  // it on every keystroke — coalesce rapid typing into one pass.
+  var searchTimer = 0;
+  $("search").addEventListener("input", function () { clearTimeout(searchTimer); searchTimer = setTimeout(applyView, 140); });
   $("fgFilter").addEventListener("change", applyView);
   $("modelFilter").addEventListener("change", applyView);
   $("rows").addEventListener("click", function (e) {
@@ -809,7 +819,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   var needsOnly = false;
   // A document wants a look if the parser left a key field empty (or couldn't
   // read the file). Checked on the latest version.
-  function needsReview(g) { var d = g.versions[0]; return !d.li || !d.title || !d.fgroup || !d.date || !!d.err || !!d.noText; }
+  // Flag when a key field is empty. (Not err/noText: those reflect the file, not
+  // the metadata, and would keep a hand-corrected scanned doc flagged forever.)
+  function needsReview(g) { var d = g.versions[0]; return !d.li || !d.title || !d.fgroup || !d.date; }
   $("needsFilter").addEventListener("click", function () {
     needsOnly = !needsOnly;
     this.classList.toggle("on", needsOnly);
@@ -1519,9 +1531,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     copyText(location.href.split("#")[0] + "#" + encodeURIComponent(li), "Link copied.");
   });
   document.querySelectorAll("[data-close]").forEach(function (b) { b.addEventListener("click", closeOverlays); });
-  $("diffClose").addEventListener("click", function () { vSeq++; vCleanDocs(); $("diffOverlay").classList.remove("show"); });
-  document.querySelectorAll(".overlay").forEach(function (o) { o.addEventListener("click", function (e) { if (e.target !== o) return; if (o.id === "diffOverlay") { vSeq++; o.classList.remove("show"); } else closeOverlays(); }); });
-  document.addEventListener("keydown", function (e) { if (e.key !== "Escape") return; if ($("diffOverlay").classList.contains("show")) { vSeq++; $("diffOverlay").classList.remove("show"); } else closeOverlays(); });
+  // Close the diff overlay from every path (button, backdrop, Escape) through
+  // one function, so the rendered PDF.js documents are always destroyed.
+  function closeDiff() { vSeq++; vCleanDocs(); $("diffOverlay").classList.remove("show"); }
+  $("diffClose").addEventListener("click", closeDiff);
+  document.querySelectorAll(".overlay").forEach(function (o) { o.addEventListener("click", function (e) { if (e.target !== o) return; if (o.id === "diffOverlay") closeDiff(); else closeOverlays(); }); });
+  document.addEventListener("keydown", function (e) { if (e.key !== "Escape") return; if ($("diffOverlay").classList.contains("show")) closeDiff(); else closeOverlays(); });
 
   // ---------- PWA: offline cache + native install ----------
   // Only possible when served over http(s) — double-clicked file:// copies
@@ -1565,7 +1580,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     $("menuBtn").setAttribute("aria-expanded", String(willOpen));
   });
   // Choosing any item runs its own handler, then closes the menu.
-  $("appMenu").addEventListener("click", function () { closeMenu(); });
+  $("appMenu").addEventListener("click", function (e) { if (e.target.closest(".menu-item")) closeMenu(); });
   document.addEventListener("click", function (e) { if (!$("appMenu").hidden && !$("appMenu").contains(e.target) && e.target !== $("menuBtn")) closeMenu(); });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !$("appMenu").hidden) closeMenu(); });
 
@@ -1766,7 +1781,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   $("backupBtn").addEventListener("click", function () {
     if (!docs.length) { toast("Database is empty."); return; }
     toast("Building backup…");
-    buildBackup().then(function (b) { dlBlob(b, "LI-database-backup.lidb"); });
+    buildBackup().then(function (b) { dlBlob(b, "LI-database-backup.lidb"); }, function () { toast("Couldn't build the backup."); });
   });
 
   // ---------- auto-save to a chosen file (e.g. on a flash drive) ----------
@@ -1775,6 +1790,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   function scheduleAutosave() { if (!asOn || !asHandle) return; asPending = true; clearTimeout(asTimer); asTimer = setTimeout(runAutosave, 1500); }
   function runAutosave() {
     if (!asOn || !asHandle) return;
+    // Never write a half-finished database: defer until an import completes
+    // (the import's own scheduleAutosave will then persist the full result).
+    if (importing) { clearTimeout(asTimer); asTimer = setTimeout(runAutosave, 1500); return; }
     if (asBusy) { asAgain = true; return; }
     var h = asHandle;
     asBusy = true;
@@ -1797,6 +1815,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     if (!window.showSaveFilePicker) { toast("Auto-save needs Microsoft Edge or Chrome."); return; }
     window.showSaveFilePicker({ suggestedName: "LI-database.lidb", types: [{ description: "LI Database file", accept: { "application/zip": [".lidb"] } }] })
       .then(function (h) {
+        if (!h) return;
+        // Guard against clobbering an existing backup: enabling auto-save on an
+        // empty database would immediately overwrite the chosen file with nothing.
+        if (!docs.length && !confirm("Your database is empty.\n\nTurn on auto-save anyway? It will OVERWRITE “" + (h.name || "the chosen file") + "” with an empty database.\n\nIf you meant to load that file, click Cancel and use ↥ Restore instead.")) return;
         asHandle = h; asOn = true;
         putSetting("autosave", h).catch(function () {});
         putSetting("autosaveOn", true).catch(function () {});

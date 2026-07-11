@@ -21,11 +21,20 @@ var SHELL = [
    Their files are versioned/immutable, so cache-first is safe. */
 var RUNTIME_HOSTS = ["cdn.jsdelivr.net", "tessdata.projectnaptha.com"];
 
+// Store a response in a cache, ignoring failures (a detached put must never
+// produce an unhandled rejection, e.g. on a 206 range response or quota error).
+function cachePut(cacheName, req, res) {
+  caches.open(cacheName).then(function (c) { return c.put(req, res); }).catch(function () {});
+}
+
 self.addEventListener("install", function (e) {
+  // Cache each shell asset individually and tolerate an individual failure, so
+  // one missing/renamed asset can't fail the whole install (which would leave
+  // the app with no offline support at all). The core page must succeed.
   e.waitUntil(
-    caches.open(SHELL_CACHE)
-      .then(function (c) { return c.addAll(SHELL); })
-      .then(function () { return self.skipWaiting(); })
+    caches.open(SHELL_CACHE).then(function (c) {
+      return Promise.all(SHELL.map(function (u) { return c.add(u).catch(function () {}); }));
+    }).then(function () { return self.skipWaiting(); })
   );
 });
 
@@ -44,12 +53,13 @@ self.addEventListener("fetch", function (e) {
   if (req.method !== "GET") return;
   var url = new URL(req.url);
 
-  // App shell navigations: network-first so updates arrive, cache fallback for offline.
+  // App shell navigations: network-first so updates arrive, cache fallback for
+  // offline. Only cache a successful (2xx) response — never overwrite the
+  // precached shell with a transient 5xx/maintenance page.
   if (req.mode === "navigate") {
     e.respondWith(
       fetch(req).then(function (res) {
-        var copy = res.clone();
-        caches.open(SHELL_CACHE).then(function (c) { c.put(req, copy); });
+        if (res && res.ok) cachePut(SHELL_CACHE, req, res.clone());
         return res;
       }).catch(function () {
         return caches.match(req).then(function (hit) {
@@ -61,34 +71,35 @@ self.addEventListener("fetch", function (e) {
   }
 
   // OCR engine from CDN: cache-first (files are versioned, they never change).
+  // Opaque cross-origin responses can't be inspected, so we can't tell a good
+  // one from an error page — cache them (to keep OCR working offline after the
+  // first use) but revalidate in the background so a bad one can't stick.
   if (RUNTIME_HOSTS.indexOf(url.hostname) !== -1) {
     e.respondWith(
       caches.match(req).then(function (hit) {
-        if (hit) return hit;
-        return fetch(req).then(function (res) {
-          if (res && (res.ok || res.type === "opaque")) {
-            var copy = res.clone();
-            caches.open(RUNTIME_CACHE).then(function (c) { c.put(req, copy); });
-          }
+        var net = fetch(req).then(function (res) {
+          if (res && (res.ok || res.type === "opaque")) cachePut(RUNTIME_CACHE, req, res.clone());
           return res;
         });
+        if (hit) { net.catch(function () {}); return hit; }
+        return net;
       })
     );
     return;
   }
 
-  // Same-origin static assets (icons, manifest): cache-first.
+  // Same-origin static assets (icons, manifest): stale-while-revalidate — serve
+  // the cached copy instantly, but refresh it in the background so an updated
+  // icon/manifest is picked up without needing the service worker to change.
   if (url.origin === self.location.origin) {
     e.respondWith(
       caches.match(req).then(function (hit) {
-        if (hit) return hit;
-        return fetch(req).then(function (res) {
-          if (res && res.ok) {
-            var copy = res.clone();
-            caches.open(SHELL_CACHE).then(function (c) { c.put(req, copy); });
-          }
+        var net = fetch(req).then(function (res) {
+          if (res && res.ok) cachePut(SHELL_CACHE, req, res.clone());
           return res;
         });
+        if (hit) { net.catch(function () {}); return hit; }
+        return net;
       })
     );
   }
