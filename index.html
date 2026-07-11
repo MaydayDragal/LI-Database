@@ -659,7 +659,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   function estimate() { return navigator.storage && navigator.storage.estimate ? navigator.storage.estimate() : Promise.resolve(null); }
 
   // ---------- state / render ----------
-  var docs = [], view = [], groupsByKey = {}, sortCol = "li", sortDir = 1, selected = {};
+  var docs = [], view = [], groupsByKey = {}, sortCol = "date", sortDir = -1, selected = {};
   var COLS = [
     { k: "sel", label: "", w: "34px" },
     { k: "star", label: "★", w: "30px" },
