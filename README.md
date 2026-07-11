@@ -1,8 +1,9 @@
 # 🗄️ LI Document Database
 
-A **single-file, install-free** database for your Mercedes-Benz LI documents. It runs in
-your browser, stores everything **locally on your machine**, and needs **no admin rights,
-no installer, and no internet** (except the first time you use OCR on scanned files).
+A **Progressive Web App (PWA)** database for your Mercedes-Benz LI documents. It runs in
+your browser, stores everything **locally on your machine**, works **fully offline**, and
+needs **no admin rights and no installer** (internet is only needed the first time you use
+OCR on scanned files).
 
 It has the LI renamer built in: on import it reads each PDF's **document number, version,
 title, function group, date and validity**, and lets you search, browse, preview, edit,
@@ -10,18 +11,31 @@ and export properly-named copies.
 
 ---
 
-## Getting started (no admin needed)
+## Getting started
 
-1. Copy **`LI-Database.html`** somewhere on your PC (e.g. your Documents folder or a network
+### Option A — use it as a hosted PWA (recommended)
+
+1. Open the app's URL in **Edge** or **Chrome** (see *Hosting* below — with GitHub Pages
+   that's `https://<user>.github.io/LI-Database/`).
+2. Click the **📌 Install** button in the app (or the install icon in the address bar).
+   The browser installs it as a real app: its own window, its own Start-menu/desktop icon,
+   no admin rights needed.
+3. That's it. After the first visit the whole app is cached by a service worker, so it
+   **opens and works with no internet at all** — your documents live in the browser's local
+   database on your machine and are never uploaded.
+
+### Option B — run it from a file (no hosting at all)
+
+1. Copy **`index.html`** somewhere on your PC (e.g. your Documents folder or a network
    drive you can reach).
 2. **Double-click it** — it opens in your default browser. For best results use **Microsoft
    Edge** or **Chrome** (both are on virtually every Windows machine).
-3. **Install it as an app** (recommended, no admin rights needed): click the
-   **📌 Install** button in the app — it walks you through three options:
+3. **Install it as an app**: click the **📌 Install** button in the app — since browsers
+   can't natively install a `file://` page, it walks you through three fallbacks:
    - **Desktop shortcut** (works even on locked-down work PCs, nothing to download):
      copy the ready-made command it shows, then desktop right-click → **New → Shortcut** →
      paste → name it. Then give it the proper icon: **⬇ Download icon (.ico)** from the same
-     dialog, save it next to `LI-Database.html`, and shortcut → Properties → **Change Icon…**
+     dialog, save it next to `index.html`, and shortcut → Properties → **Change Icon…**
      → Browse to it.
    - **Edge**: **⋯ → Apps → Install this site as an app** (Edge keeps a separate copy of the
      database — move your documents once with Auto-save/Backup + Restore).
@@ -29,10 +43,26 @@ and export properly-named copies.
      scripts; if Windows says "Your Internet security settings prevented these files from
      being opened", use the desktop-shortcut option instead.
 
-   If you later move `LI-Database.html` to a different folder, redo the install so the icon
+   If you later move `index.html` to a different folder, redo the install so the icon
    points at the new location.
 
-That's it. There's nothing else to install.
+## Hosting (for the PWA)
+
+Any static host works — the app is just static files. The easiest is **GitHub Pages**:
+repository **Settings → Pages → Deploy from a branch → `main` / root**. A minute later the
+app is live at `https://<user>.github.io/LI-Database/` and installable from any machine.
+
+The PWA pieces are:
+
+| File | Purpose |
+|---|---|
+| `index.html` | the entire app (PDF.js and JSZip inlined) |
+| `manifest.webmanifest` | app name, colors and icons for installation |
+| `sw.js` | service worker — precaches the app for offline use, and caches the OCR engine after its first download |
+| `icons/` | app icons (SVG + PNG, incl. maskable and Apple touch icon) |
+
+Each visitor's database stays in **their own browser's IndexedDB** — hosting the app does
+not share or upload any documents.
 
 ---
 
@@ -93,7 +123,9 @@ but to be safe and portable:
   the browser database holds far more).
 - **Privacy** — nothing is uploaded. Everything runs and stays on your computer.
 - **Engine** — PDF reading (PDF.js) and ZIP (JSZip) are built into the file, so it works
-  offline. Only OCR of scanned files fetches its engine from the internet the first time.
-- **Where's my data?** — it's stored under the browser profile for this file (IndexedDB).
+  offline. Only OCR of scanned files fetches its engine from the internet the first time;
+  when the app runs as a hosted PWA, the service worker caches the OCR engine too, so even
+  OCR works offline after its first use.
+- **Where's my data?** — it's stored under the browser profile for this app (IndexedDB).
   Clearing browser data or using a different browser/profile starts fresh — that's what the
   **Backup/Restore** buttons are for.
