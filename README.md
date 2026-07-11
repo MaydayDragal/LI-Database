@@ -82,6 +82,12 @@ not share or upload any documents.
   from the Validity field, e.g. *Model 205*); click any column to sort.
 - **Referenced documents** — when a bulletin cites other LI numbers in its text, the document
   view lists them as chips: click one to jump to that document (dimmed if you don't have it).
+- **⚠ Needs review** — a toolbar toggle that shows only documents the parser left incomplete
+  (missing LI number, title, function group or date, or a file it couldn't read) so you can
+  find and fix them.
+- **↻ Re-read all** — re-runs the parser over every stored PDF at once (keeping fields you
+  edited by hand), so improvements to the reader apply to your whole library without
+  re-importing. **↻ Re-read PDF** in the document view does the same for a single document.
 - **Star favorites** — click the ☆ in a row (or in the document view's header) to mark documents
   you use often. The **★ Starred** toolbar button filters to just your favorites, the ★ column
   header sorts starred first, and stars are saved with the database (they survive re-imports

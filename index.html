@@ -74,6 +74,7 @@
   .star:hover { transform:scale(1.2); }
   td.starcell { text-align:center; }
   #starFilter.on { color:#f5c542; border-color:#f5c542; }
+  #needsFilter.on { color:var(--danger); border-color:var(--danger); }
   .dstar { background:none; border:none; cursor:pointer; font-size:20px; color:var(--muted); line-height:1; padding:2px 4px; flex:none; }
   .dstar.on { color:#f5c542; }
   .ver-badge { display:inline-block; background:#223154; color:var(--accent); border-radius:5px; padding:1px 7px; font-size:12px; }
@@ -180,7 +181,9 @@
   <select id="fgFilter"><option value="">All function groups</option></select>
   <select id="modelFilter" title="Filter by model series (from Validity)"><option value="">All models</option></select>
   <button class="btn btn-ghost btn-sm" id="starFilter" title="Show starred only">☆ Starred</button>
+  <button class="btn btn-ghost btn-sm" id="needsFilter" title="Show only documents with missing or suspect fields">⚠ Needs review</button>
   <span class="count" id="count"></span>
+  <button class="btn btn-ghost btn-sm" id="rereadAllBtn" title="Re-run the parser over every stored PDF (keeps your hand edits)">↻ Re-read all</button>
   <button class="btn btn-ghost btn-sm" id="selAll">Select all</button>
   <button class="btn btn-danger btn-sm" id="delSel">Delete selected</button>
 </div>
@@ -684,6 +687,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     Object.keys(selected).forEach(function (k) { if (!groupsByKey[k]) delete selected[k]; });
     view = groups.filter(function (g) {
       if (starOnly && !isStarred(g)) return false;
+      if (needsOnly && !needsReview(g)) return false;
       if (fg && !g.versions.some(function (d) { return d.fgroup === fg; })) return false;
       if (model && !g.versions.some(function (d) { return modelsOf(d).indexOf(model) !== -1; })) return false;
       if (!q) return true;
@@ -740,6 +744,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     starOnly = !starOnly;
     this.classList.toggle("on", starOnly);
     this.textContent = (starOnly ? "★" : "☆") + " Starred";
+    applyView();
+  });
+  var needsOnly = false;
+  // A document wants a look if the parser left a key field empty (or couldn't
+  // read the file). Checked on the latest version.
+  function needsReview(g) { var d = g.versions[0]; return !d.li || !d.title || !d.fgroup || !d.date || !!d.err || !!d.noText; }
+  $("needsFilter").addEventListener("click", function () {
+    needsOnly = !needsOnly;
+    this.classList.toggle("on", needsOnly);
     applyView();
   });
   $("selAll").addEventListener("click", function () { var all = view.every(function (g) { return selected[g.key]; }); view.forEach(function (g) { if (all) delete selected[g.key]; else selected[g.key] = 1; }); render(); });
@@ -859,26 +872,61 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   $("dDownloadOrig").addEventListener("click", function () { if (!curDoc) return; getFile(curDoc.id).then(function (b) { if (b) dlBlob(b, curDoc.filename || rlName(collectDetail())); }); });
   // Re-extract metadata from the stored PDF in place — lets entries imported
   // with an older extractor pick up improvements without re-importing files.
-  $("dReread").addEventListener("click", function () {
-    if (!curDoc) return;
-    var d = curDoc;
-    toast("Re-reading PDF…");
-    getFile(d.id).then(function (blob) {
-      if (!blob) { toast("No stored PDF for this entry."); return; }
+  // Re-extract a single stored doc in place, keeping hand-edited fields.
+  // Returns true if re-read, false if it has no stored PDF. worker (optional):
+  // a pooled PDF.js worker, for the concurrent "Re-read all" pass.
+  function rereadDoc(d, worker) {
+    return getFile(d.id).then(function (blob) {
+      if (!blob) return false;
       var shim = { arrayBuffer: function () { return blob.arrayBuffer(); }, name: d.filename || "", size: d.size || blob.size };
-      return extract(shim).then(function (m) {
+      return extract(shim, worker).then(function (m) {
         var ed = d.edited || {};
         ["li", "ver"].forEach(function (k) { if (!ed[k] && m[k] && !d[k]) d[k] = m[k]; });
         ["title", "reason", "fgroup", "date", "validity"].forEach(function (k) { if (!ed[k]) d[k] = m[k]; });
         d.text = m.text; d.pages = m.pages || 0; d.noText = m.noText; d.err = !!m.err;
-        return putDoc(d, null).then(function () {
-          if (curDoc === d) loadVersion(curVerIdx);
-          applyView(); updateStore(); scheduleAutosave();
-          toast("Re-read complete — fields refreshed.");
-        });
+        return putDoc(d, null).then(function () { return true; });
       });
+    });
+  }
+  $("dReread").addEventListener("click", function () {
+    if (!curDoc) return;
+    var d = curDoc;
+    toast("Re-reading PDF…");
+    rereadDoc(d).then(function (ok) {
+      if (!ok) { toast("No stored PDF for this entry."); return; }
+      if (curDoc === d) loadVersion(curVerIdx);
+      applyView(); updateStore(); scheduleAutosave();
+      toast("Re-read complete — fields refreshed.");
     }).catch(function () { toast("Couldn't re-read this PDF."); });
   });
+  // Re-run the parser over every stored PDF (keeps hand-edited fields), across
+  // the worker pool. Useful after the extractor improves.
+  function rereadAll() {
+    if (importing) { toast("Busy — wait for the current operation to finish."); return; }
+    if (!docs.length) { toast("No documents to re-read."); return; }
+    if (!confirm("Re-read all " + docs.length + " document(s) from their stored PDFs?\nFields you edited by hand are kept.")) return;
+    importing = true;
+    var list = docs.slice(), pool = pdfPool(Math.min(list.length, 8)), cursor = 0, done = 0, failed = 0;
+    toast("Re-reading… 0 / " + list.length);
+    function lane(worker) {
+      function next() {
+        var idx = cursor++;
+        if (idx >= list.length) return Promise.resolve();
+        return rereadDoc(list[idx], worker).then(function (ok) { if (!ok) failed++; }, function () { failed++; }).then(function () {
+          done++;
+          if (done % 5 === 0 || done === list.length) toast("Re-reading… " + done + " / " + list.length);
+        }).then(next);
+      }
+      return next();
+    }
+    Promise.all(pool.map(lane)).then(function () {
+      tessFreeAll();
+      importing = false;
+      applyView(); updateStore(); scheduleAutosave();
+      toast("Re-read " + (list.length - failed) + " document(s)." + (failed ? " ⚠ " + failed + " had no stored PDF." : ""));
+    });
+  }
+  $("rereadAllBtn").addEventListener("click", rereadAll);
   $("dDelete").addEventListener("click", function () { if (!curDoc) return; if (!confirm("Delete this version from the database?")) return; delDoc(curDoc.id).then(function () { closeOverlays(); return refresh(); }).then(function () { toast("Deleted."); scheduleAutosave(); }); });
 
   // compare / diff
