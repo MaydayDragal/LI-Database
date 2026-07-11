@@ -434,7 +434,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       });
   }
   function joinHyphen(arr) { var out = ""; arr.forEach(function (t, i) { if (i === 0) { out = t; return; } if (/[-‐‑]$/.test(out)) out = out.replace(/[-‐‑]\s*$/, "") + t; else out += " " + t; }); return out; }
-  var HEADER_RE = /^(xentry\b|wis\b|asra\b|star\s*diagnosis|page\s*\d|seite\s*\d|©|copyright\b|printed\b|https?:|www\.)/i;
+  // "xentry" only as a standalone letterhead ("XENTRY", "XENTRY Tips",
+  // "XENTRY Diagnosis") — NOT a real title that merely starts with the word
+  // Xentry (e.g. "Xentry Battery Tester results disagree with…").
+  var HEADER_RE = /^(xentry(?:\s+(?:tips|diagnosis))?\s*$|wis\b|asra\b|star\s*diagnosis|page\s*\d|seite\s*\d|©|copyright\b|printed\b|https?:|www\.)/i;
   var FIELD_RE = /^\s*(topic\s*number|dokument(nummer|\s*nr)|document\s*number|dok\.?\s*-?\s*nr|order\s*number|auftrag)/i;
   function titleFromStructure(lines, li) {
     if (!lines || !lines.length) return "";
