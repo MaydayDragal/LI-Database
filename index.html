@@ -479,7 +479,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         for (var j = i + 1; j < lines.length && j <= i + 8; j++) {
           var t = (lines[j].text || "").trim();
           if (!t || t === "\f" || LABEL_RE.test(t) || FIELD_RE.test(t) || HEADER_RE.test(t)) break;
-          v += (v ? " " : "") + t;
+          // a word hyphenated across the wrap ("ACTI-" + "VE …") rejoins with
+          // no hyphen and no space; but a real trailing hyphen in a code
+          // (e.g. "…-P-" then digits) is left intact
+          if (/[A-Za-z][-‐‑]$/.test(v) && /^[A-Za-z]/.test(t)) v = v.replace(/[-‐‑]\s*$/, "") + t;
+          else v += (v ? " " : "") + t;
           if (v.length > 600) break;
         }
       }
