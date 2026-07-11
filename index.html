@@ -711,7 +711,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     $("dReason").value = d.reason || ""; $("dFg").value = d.fgroup || ""; $("dDate").value = d.date || ""; $("dValid").value = d.validity || "";
     updNewName();
     dDirty = false;
-    getFile(d.id).then(function (blob) { if (curDoc !== d || !$("detailOverlay").classList.contains("show")) return; if (curUrl) URL.revokeObjectURL(curUrl); curUrl = blob ? URL.createObjectURL(blob) : null; $("dFrame").src = curUrl || "about:blank"; });
+    getFile(d.id).then(function (blob) { if (curDoc !== d || !$("detailOverlay").classList.contains("show")) return; if (curUrl) URL.revokeObjectURL(curUrl); curUrl = blob ? URL.createObjectURL(asPdf(blob)) : null; $("dFrame").src = curUrl || "about:blank"; });
   }
   $("dVerSel").addEventListener("change", function () { loadVersion(+this.value); });
   function collectDetail() { return { li: $("dLi").value, ver: $("dVer").value, title: $("dTitleIn").value, reason: $("dReason").value, fgroup: $("dFg").value, date: $("dDate").value, validity: $("dValid").value }; }
@@ -751,6 +751,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       toast("Saved."); scheduleAutosave();
     });
   });
+  // Blobs restored from a .lidb backup come back through JSZip without a MIME
+  // type, so the browser's built-in PDF viewer would render their raw bytes as
+  // text. Guarantee the application/pdf type before we show or store one.
+  function asPdf(blob) { return (blob && blob.type === "application/pdf") ? blob : new Blob([blob], { type: "application/pdf" }); }
   function dlBlob(blob, name) { var u = URL.createObjectURL(blob), a = document.createElement("a"); a.href = u; a.download = name; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function () { URL.revokeObjectURL(u); }, 4000); }
   $("dDownload").addEventListener("click", function () { if (!curDoc) return; getFile(curDoc.id).then(function (b) { if (b) dlBlob(b, rlName(collectDetail())); }); });
   $("dDownloadOrig").addEventListener("click", function () { if (!curDoc) return; getFile(curDoc.id).then(function (b) { if (b) dlBlob(b, curDoc.filename || rlName(collectDetail())); }); });
@@ -1496,7 +1500,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         (function next() {
           if (i >= list.length) { refresh().then(function () { toast("Restored " + (list.length - fails) + " documents." + (fails ? " ⚠ " + fails + " failed." : "")); scheduleAutosave(); }); return; }
           var d = list[i], fe = zip.file("files/" + (d.fname || String(d.id).replace(/[^A-Za-z0-9._-]/g, "_") + ".pdf"));
-          (fe ? fe.async("blob") : Promise.resolve(null)).then(function (blob) { return putDoc(d, blob); }).catch(function () { fails++; }).then(function () { i++; next(); });
+          (fe ? fe.async("blob") : Promise.resolve(null)).then(function (blob) { return putDoc(d, blob ? asPdf(blob) : null); }).catch(function () { fails++; }).then(function () { i++; next(); });
         })();
       });
     }).catch(function () { toast("Couldn't read that backup."); });
