@@ -1271,7 +1271,22 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }).catch(function () {});
   }
   window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); nativeInstall = e; });
-  window.addEventListener("appinstalled", function () { nativeInstall = null; toast("Installed — look for “LI Document Database” in your Start menu / desktop."); });
+  window.addEventListener("appinstalled", function () { nativeInstall = null; updInstallBtn(); toast("Installed — look for “LI Document Database” in your Start menu / desktop."); });
+
+  // Launched from an installed icon (PWA, Edge app, or a --app shortcut/.bat)?
+  // Those all run in an app/standalone display mode — hide the Install button.
+  function isAppMode() {
+    if (navigator.standalone === true) return true; // iOS home-screen
+    return !!(window.matchMedia && ["standalone", "minimal-ui", "fullscreen"].some(function (m) {
+      return window.matchMedia("(display-mode: " + m + ")").matches;
+    }));
+  }
+  function updInstallBtn() { $("installBtn").style.display = isAppMode() ? "none" : ""; }
+  updInstallBtn();
+  if (window.matchMedia) ["standalone", "minimal-ui", "fullscreen"].forEach(function (m) {
+    var mq = window.matchMedia("(display-mode: " + m + ")");
+    (mq.addEventListener ? mq.addEventListener.bind(mq, "change") : mq.addListener.bind(mq))(updInstallBtn);
+  });
 
   // ---------- install as desktop app ----------
   // Windows .ico (16/32/48/256) of the app icon, for desktop shortcuts
