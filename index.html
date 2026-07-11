@@ -505,34 +505,60 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     tessP = new Promise(function (res, rej) { var s = document.createElement("script"); s.src = T_LIB; s.onload = function () { window.Tesseract ? res(window.Tesseract) : rej(new Error("OCR init failed")); }; s.onerror = function () { rej(new Error("OCR engine unavailable (needs internet once).")); }; document.head.appendChild(s); });
     return tessP;
   }
-  function ocrPdf(doc) {
+  // A pool of reusable OCR workers so several scanned PDFs are recognized on
+  // different cores at once. Reused across files within an import (worker
+  // startup — WASM core + language data — is the expensive part), and capped
+  // low because each worker is memory-heavy.
+  var tessWorkers = [];
+  function tessPool(n) {
+    n = Math.max(1, Math.min(n, (navigator.hardwareConcurrency || 4) - 1, 4));
+    return loadTess().then(function (T) {
+      var need = [];
+      for (var k = tessWorkers.length; k < n; k++) need.push(T.createWorker("eng", 1, { workerPath: T_WORK, corePath: T_CORE, langPath: T_LANG }));
+      if (!need.length) return tessWorkers.slice(0, n);
+      return Promise.all(need).then(function (ws) { tessWorkers = tessWorkers.concat(ws); return tessWorkers.slice(0, n); });
+    });
+  }
+  function tessPoolFree() { var ws = tessWorkers; tessWorkers = []; ws.forEach(function (w) { try { w.terminate(); } catch (e) {} }); }
+  // Recognize the first pages of a doc with the given worker.
+  function ocrPages(doc, w) {
+    var pages = Math.min(doc.numPages, 2), text = "", lines = [], i = 1;
+    function step() {
+      if (i > pages) return Promise.resolve({ text: text, lines: lines });
+      return doc.getPage(i).then(function (page) {
+        var vp = page.getViewport({ scale: 3 }); var c = document.createElement("canvas"); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+        var ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+        return page.render({ canvasContext: ctx, viewport: vp }).promise.then(function () {
+          return w.recognize(c).then(function (r) {
+            text += (r.data.text || "") + "\n";
+            (r.data.lines || []).forEach(function (ln) { var s = (ln.text || "").replace(/\s+/g, " ").trim(); if (s) lines.push({ text: s, h: ln.bbox ? ln.bbox.y1 - ln.bbox.y0 : 0, y: ln.bbox ? ln.bbox.y0 : 0 }); });
+            i++; return step();
+          });
+        });
+      });
+    }
+    return step();
+  }
+  // worker (optional): a pooled OCR worker to reuse; without one, a throwaway
+  // worker is created and terminated (used by the single-doc Re-read path).
+  function ocrPdf(doc, worker) {
+    if (worker) return ocrPages(doc, worker);
     return loadTess().then(function (T) {
       return T.createWorker("eng", 1, { workerPath: T_WORK, corePath: T_CORE, langPath: T_LANG }).then(function (w) {
-        var pages = Math.min(doc.numPages, 2), text = "", lines = [], i = 1;
-        function step() {
-          if (i > pages) return w.terminate().then(function () { return { text: text, lines: lines }; });
-          return doc.getPage(i).then(function (page) {
-            var vp = page.getViewport({ scale: 3 }); var c = document.createElement("canvas"); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
-            var ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
-            return page.render({ canvasContext: ctx, viewport: vp }).promise.then(function () {
-              return w.recognize(c).then(function (r) {
-                text += (r.data.text || "") + "\n";
-                (r.data.lines || []).forEach(function (ln) { var s = (ln.text || "").replace(/\s+/g, " ").trim(); if (s) lines.push({ text: s, h: ln.bbox ? ln.bbox.y1 - ln.bbox.y0 : 0, y: ln.bbox ? ln.bbox.y0 : 0 }); });
-                i++; return step();
-              });
-            });
-          });
-        }
-        return step().catch(function (e) { return w.terminate().then(function () { throw e; }, function () { throw e; }); });
+        return ocrPages(doc, w).then(
+          function (r) { return w.terminate().then(function () { return r; }, function () { return r; }); },
+          function (e) { return w.terminate().then(function () { throw e; }, function () { throw e; }); }
+        );
       });
     });
   }
 
-  function extract(file, useOcr, worker) {
+  function extract(file, useOcr, worker, tessWorker) {
     return file.arrayBuffer().then(function (buf) {
       // worker (optional): a dedicated PDF.js worker from the import pool, so
-      // several PDFs parse on different cores at once. Omitted elsewhere (the
-      // shared global worker is used).
+      // several PDFs parse on different cores at once. tessWorker (optional): a
+      // pooled OCR worker for the same reason. Omitted elsewhere (the shared
+      // global PDF worker / a throwaway OCR worker is used).
       var task = pdfjsLib.getDocument(worker ? { data: buf.slice(0), worker: worker } : { data: buf.slice(0) });
       return task.promise.then(function (doc) {
         var pages = Math.min(doc.numPages, 10), text = "", page1Lines = [], allLines = [], i = 1;
@@ -550,7 +576,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             var li0 = detectLI(file.name) || detectLIFuzzy(file.name);
             return { li: li0, ver: detectVersion(file.name, li0), title: "", reason: "", fgroup: "", date: "", validity: "", text: "", pages: doc.numPages, ocr: false, noText: true };
           }
-          return ocrPdf(doc).then(function (o) { return finish(o.text, o.lines, o.lines, true); }).catch(function () {
+          return ocrPdf(doc, tessWorker).then(function (o) { return finish(o.text, o.lines, o.lines, true); }).catch(function () {
             if (plainLen > 0) return finish(text, page1Lines, allLines, false);
             var li1 = detectLI(file.name) || detectLIFuzzy(file.name);
             return { li: li1, ver: detectVersion(file.name, li1), title: "", reason: "", fgroup: "", date: "", validity: "", text: "", pages: doc.numPages, ocr: false, noText: true };
@@ -1391,9 +1417,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     var useOcr = $("optOcr").checked;
     $("impProg").style.display = "block";
     var added = 0, updated = 0, failed = 0, quota = false, cursor = 0, done = 0, aborted = false;
-    // Parse many at once (own worker each) but OCR one-at-a-time. Never spin up
-    // more workers than there are files.
-    var pool = pdfPool(useOcr ? 1 : Math.min(arr.length, 8));
+    // Process files concurrently, one PDF.js worker per lane. OCR uses a
+    // smaller pool (its workers are memory-heavy). Never more lanes than files.
+    var laneN = useOcr ? Math.min(arr.length, (navigator.hardwareConcurrency || 4) - 1, 4) : Math.min(arr.length, 8);
+    var pool = pdfPool(laneN);
 
     // Commits are chained so the shared docs[]/counters mutate one-at-a-time on
     // the main thread — dedupe (same LI+version) stays correct under concurrency.
@@ -1422,21 +1449,28 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       return commitChain;
     }
 
-    // Each lane owns one worker and pulls the next file until the list is done.
-    function lane(worker) {
+    // Each lane owns a PDF.js worker (and, for OCR, a Tesseract worker) and
+    // pulls the next file until the list is done.
+    function lane(worker, tw) {
       function nextInLane() {
         if (aborted) return Promise.resolve();
         var idx = cursor++;
         if (idx >= arr.length) return Promise.resolve();
         var f = arr[idx];
-        return extract(f, useOcr, worker)
+        return extract(f, useOcr, worker, tw)
           .then(function (m) { return commit(f, m, null); }, function (e) { return commit(f, null, e); })
           .then(nextInLane);
       }
       return nextInLane();
     }
 
-    Promise.all(pool.map(lane)).then(function () { return commitChain; }).then(function () {
+    // OCR needs its worker pool ready before lanes start; if the engine can't
+    // load (e.g. no internet), fall back to per-file handling inside extract.
+    var prep = useOcr ? tessPool(pool.length).catch(function () { return []; }) : Promise.resolve([]);
+    prep.then(function (tess) {
+      return Promise.all(pool.map(function (w, k) { return lane(w, tess[k]); })).then(function () { return commitChain; });
+    }).then(function () {
+      if (useOcr) tessPoolFree(); // free the memory-heavy OCR workers
       if (aborted) failed += arr.length - done; // files skipped after storage filled up
       importing = false;
       $("impProg").style.display = "none"; $("importOverlay").classList.remove("show");
