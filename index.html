@@ -1063,9 +1063,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   // change so the whole rewritten region highlights coherently.
   function cleanupOps(ops) {
     var changed = true, guard = 0, runs;
+    // eq / mv (moved, from line-anchored move detection) / ch (real del+ins).
+    function typeOf(op) { return op[0] === "eq" ? "eq" : (op[0] === "mvd" || op[0] === "mvi") ? "mv" : "ch"; }
     function toRuns(list) {
       var rs = [];
-      list.forEach(function (op) { var t = op[0] === "eq" ? "eq" : "ch"; var last = rs[rs.length - 1]; if (last && last.t === t) last.ops.push(op); else rs.push({ t: t, ops: [op] }); });
+      list.forEach(function (op) { var t = typeOf(op); var last = rs[rs.length - 1]; if (last && last.t === t) last.ops.push(op); else rs.push({ t: t, ops: [op] }); });
       return rs;
     }
     while (changed && guard++ < 6) {
@@ -1074,6 +1076,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       for (var i = 1; i < runs.length - 1; i++) {
         var r = runs[i];
         if (r.t !== "eq" || runs[i - 1].t !== "ch" || runs[i + 1].t !== "ch") continue;
+        if (r.ops.some(function (op) { return op[3]; })) continue; // never dissolve a whole-line match
         var L = r.ops.length, s1 = runs[i - 1].ops.length, s2 = runs[i + 1].ops.length;
         if (L <= 2 && s1 >= 2 && s2 >= 2 && s1 + s2 >= 6) {
           var conv = [];
@@ -1085,10 +1088,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       ops = [];
       runs.forEach(function (r) { r.ops.forEach(function (op) { ops.push(op); }); });
     }
-    // group each changed region as removals-then-additions for clean rendering
+    // group each changed region as removals-then-additions for clean rendering;
+    // eq and moved runs pass through unchanged (moves must not be dropped).
     var out = [];
     toRuns(ops).forEach(function (r) {
-      if (r.t === "eq") { r.ops.forEach(function (op) { out.push(op); }); return; }
+      if (r.t !== "ch") { r.ops.forEach(function (op) { out.push(op); }); return; }
       r.ops.forEach(function (op) { if (op[0] === "del") out.push(op); });
       r.ops.forEach(function (op) { if (op[0] === "ins") out.push(op); });
     });
@@ -1266,20 +1270,34 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
     var ra = toLines(An, La), rb = toLines(Bn, Lb);
     var lops = tokenOps(ra.map(function (r) { return r.str; }), rb.map(function (r) { return r.str; }));
+    // Whole-line move detection: a deleted line whose exact text reappears as an
+    // inserted line elsewhere is a reordered line (a sorted/shuffled list), not
+    // a change. Pair them so they're marked moved instead of removed+added —
+    // this stops a re-sorted list (e.g. Validity model rows) from lighting up.
+    var insByStr = {}, moved = {};
+    for (var li = 0; li < lops.length; li++) if (lops[li][0] === "ins") { var s0 = rb[lops[li][1]].str; if (s0) (insByStr[s0] = insByStr[s0] || []).push(li); }
+    for (li = 0; li < lops.length; li++) if (lops[li][0] === "del") { var s1 = ra[lops[li][1]].str, bucket = s1 && insByStr[s1]; if (bucket && bucket.length) { moved[li] = 1; moved[bucket.shift()] = 1; } }
     var ops = [], k = 0;
     while (k < lops.length) {
       if (lops[k][0] === "eq") {
         var a = ra[lops[k][1]], b = rb[lops[k][2]];
-        for (var q = 0; a.s + q < a.e; q++) ops.push(["eq", a.s + q, b.s + q]);
+        // 4th element marks a whole-line match — cleanupOps must not dissolve it.
+        for (var q = 0; a.s + q < a.e; q++) ops.push(["eq", a.s + q, b.s + q, 1]);
         k++; continue;
       }
+      if (moved[k]) {
+        if (lops[k][0] === "del") { var rd = ra[lops[k][1]]; for (var qd = rd.s; qd < rd.e; qd++) ops.push(["mvd", qd]); }
+        else { var rin = rb[lops[k][1]]; for (var qi = rin.s; qi < rin.e; qi++) ops.push(["mvi", qi]); }
+        k++; continue;
+      }
+      // A contiguous run of changed, non-moved lines — refine to word level.
       var aS = -1, aE = -1, bS = -1, bE = -1;
-      while (k < lops.length && lops[k][0] !== "eq") {
+      while (k < lops.length && lops[k][0] !== "eq" && !moved[k]) {
         if (lops[k][0] === "del") { var r1 = ra[lops[k][1]]; if (aS < 0) aS = r1.s; aE = r1.e; }
         else { var r2 = rb[lops[k][1]]; if (bS < 0) bS = r2.s; bE = r2.e; }
         k++;
       }
-      tokenOpsCore(An, Bn, aS < 0 ? 0 : aS, aS < 0 ? 0 : aE, bS < 0 ? 0 : bS, bS < 0 ? 0 : bE, ops, 0);
+      if (aS >= 0 || bS >= 0) tokenOpsCore(An, Bn, aS < 0 ? 0 : aS, aS < 0 ? 0 : aE, bS < 0 ? 0 : bS, bS < 0 ? 0 : bE, ops, 0);
     }
     return ops;
   }
