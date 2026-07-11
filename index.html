@@ -681,6 +681,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return out;
   }
   function verNum(d) { return parseFloat(d.ver) || 0; }
+  // A sortable YYYYMMDD number from a date string. Handles US M/D/YY(YY)
+  // (the common form after normalization) and ISO YYYY/M/D; unparseable/empty
+  // dates sort together at the low end. 2-digit years pivot at 70 (→19xx/20xx).
+  function dateVal(s) {
+    var t = String(s || "").match(/\d+/g); if (!t || t.length < 3) return 0;
+    var y, mo, d;
+    if (t[0].length === 4) { y = +t[0]; mo = +t[1]; d = +t[2]; } else { mo = +t[0]; d = +t[1]; y = +t[2]; }
+    if (y < 100) y += (y < 70 ? 2000 : 1900);
+    return y * 10000 + mo * 100 + d;
+  }
   function isStarred(g) { return g.versions.some(function (v) { return v.star; }); }
   var starOnly = false;
   function groupDocs(list) {
@@ -706,6 +716,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (sortCol === "star") return sortDir * ((isStarred(b) ? 1 : 0) - (isStarred(a) ? 1 : 0));
       var da = a.versions[0], db = b.versions[0], x = da[sortCol], y = db[sortCol];
       if (sortCol === "size" || sortCol === "ver") { x = parseFloat(x) || 0; y = parseFloat(y) || 0; return sortDir * (x - y); }
+      if (sortCol === "date") { return sortDir * (dateVal(x) - dateVal(y)); }
       return sortDir * String(x || "").localeCompare(String(y || ""));
     });
     render();
