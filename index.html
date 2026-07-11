@@ -77,6 +77,9 @@
   #needsFilter.on { color:var(--danger); border-color:var(--danger); }
   .dstar { background:none; border:none; cursor:pointer; font-size:20px; color:var(--muted); line-height:1; padding:2px 4px; flex:none; }
   .dstar.on { color:#f5c542; }
+  .dback { background:var(--panel-2); border:1px solid var(--border); color:var(--text); cursor:pointer; font-size:12.5px; font-weight:600; line-height:1; border-radius:8px; padding:6px 10px; flex:none; }
+  .dback:hover { border-color:var(--accent); }
+  .copyrow { display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 10px; }
   .ver-badge { display:inline-block; background:#223154; color:var(--accent); border-radius:5px; padding:1px 7px; font-size:12px; }
   td.title-cell { max-width:520px; }
   .chk { width:16px; height:16px; accent-color:var(--accent); }
@@ -222,6 +225,7 @@
 <div class="overlay" id="detailOverlay">
   <div class="modal big">
     <div class="modal-head">
+      <button class="dback" id="dBack" title="Back to the document you came from" style="display:none">← Back</button>
       <h2 id="dTitle">Document</h2>
       <button class="dstar" id="dStar" title="Star this document">☆</button>
       <div class="verpick" id="dVerPick" style="display:none"><span class="muted" style="font-size:12px">Viewing</span><select id="dVerSel"></select></div>
@@ -241,6 +245,11 @@
         </div>
         <label class="muted" style="font-size:11px">New filename</label>
         <div class="newname" id="dNewName"></div>
+        <div class="copyrow">
+          <button class="btn btn-ghost btn-sm" id="dCopyLi" title="Copy the LI document number">📋 LI number</button>
+          <button class="btn btn-ghost btn-sm" id="dCopyName" title="Copy the renamed filename">📋 Filename</button>
+          <button class="btn btn-ghost btn-sm" id="dCopyLink" title="Copy a link that opens straight to this document">🔗 Link</button>
+        </div>
         <div class="meta-actions">
           <button class="btn btn-primary btn-sm" id="dSave">Save</button>
           <button class="btn btn-green btn-sm" id="dDownload">⬇ Renamed</button>
@@ -764,9 +773,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   });
 
   // ---------- detail modal (versions + compare) ----------
-  var curGroup = null, curDoc = null, curVerIdx = 0, curUrl = null, dDirty = false;
-  function openDetail(key) {
-    curGroup = groupsByKey[key]; if (!curGroup) return;
+  var curGroup = null, curDoc = null, curVerIdx = 0, curUrl = null, dDirty = false, navStack = [];
+  // fromNav: called from a reference-follow or the Back button, which manage
+  // the history stack themselves. A plain open (row click, permalink) is a
+  // fresh start, so the stack is cleared.
+  function openDetail(key, fromNav) {
+    if (!groupsByKey[key]) return;
+    if (!fromNav) navStack = [];
+    curGroup = groupsByKey[key];
     var sel = $("dVerSel"); sel.innerHTML = "";
     curGroup.versions.forEach(function (d, i) { var o = document.createElement("option"); o.value = i; o.textContent = "Version " + (d.ver || "?"); sel.appendChild(o); });
     var multi = curGroup.versions.length > 1;
@@ -775,8 +789,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     if (multi) fillCmp();
     loadVersion(0);
     updDStar();
+    $("dBack").style.display = navStack.length ? "" : "none";
+    setHash(curGroup.li || "");
     $("detailOverlay").classList.add("show");
   }
+  $("dBack").addEventListener("click", function () {
+    if (!navStack.length) return;
+    if (dDirty && !confirm("Discard unsaved changes to this document?")) return;
+    dDirty = false;
+    openDetail(navStack.pop(), true);
+  });
   function updDStar() {
     if (!curGroup) return;
     var on = isStarred(curGroup);
@@ -823,7 +845,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     if (!groupsByKey[key]) { toast("That document isn't in your library."); return; }
     if (dDirty && !confirm("Discard unsaved changes to this document?")) return;
     dDirty = false;
-    openDetail(key);
+    if (curGroup) navStack.push(curGroup.key); // remember where we came from
+    openDetail(key, true);
   }
   $("dVerSel").addEventListener("change", function () { loadVersion(+this.value); });
   function collectDetail() { return { li: $("dLi").value, ver: $("dVer").value, title: $("dTitleIn").value, reason: $("dReason").value, fgroup: $("dFg").value, date: $("dDate").value, validity: $("dValid").value }; }
@@ -1383,10 +1406,36 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   function closeOverlays() {
     if ($("detailOverlay").classList.contains("show") && dDirty && !confirm("Discard unsaved changes to this document?")) return;
-    dDirty = false; vSeq++; vCleanDocs(); curDoc = null; curGroup = null;
+    var wasDetail = $("detailOverlay").classList.contains("show");
+    dDirty = false; vSeq++; vCleanDocs(); curDoc = null; curGroup = null; navStack = [];
     $("detailOverlay").classList.remove("show"); $("importOverlay").classList.remove("show"); $("diffOverlay").classList.remove("show"); $("installOverlay").classList.remove("show");
     if (curUrl) { URL.revokeObjectURL(curUrl); curUrl = null; } $("dFrame").src = "about:blank";
+    if (wasDetail) setHash("");
   }
+  // ---------- permalinks + quick copy ----------
+  // Reflect the open document in the URL (#LI…) via replaceState so it's
+  // shareable/bookmarkable without cluttering browser history.
+  function setHash(li) { try { history.replaceState(null, "", li ? ("#" + encodeURIComponent(li)) : (location.pathname + location.search)); } catch (e) {} }
+  function openFromHash() {
+    var h = (location.hash || "").replace(/^#/, ""); if (!h) return;
+    try { h = decodeURIComponent(h); } catch (e) {}
+    if (groupsByKey["li:" + h] && (!curGroup || curGroup.key !== "li:" + h)) openDetail("li:" + h);
+  }
+  // React to a link pasted/opened while the app is already running. Our own
+  // URL updates use replaceState, which doesn't fire this — so no loop.
+  window.addEventListener("hashchange", openFromHash);
+  function copyText(txt, okMsg) {
+    if (!txt) { toast("Nothing to copy."); return; }
+    var done = function () { toast(okMsg || "Copied."); };
+    var fb = function () { try { var ta = document.createElement("textarea"); ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); var ok = document.execCommand("copy"); document.body.removeChild(ta); ok ? done() : toast("Couldn't copy."); } catch (e) { toast("Couldn't copy."); } };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fb); else fb();
+  }
+  $("dCopyLi").addEventListener("click", function () { copyText($("dLi").value.trim(), "LI number copied."); });
+  $("dCopyName").addEventListener("click", function () { copyText(rlName(collectDetail()), "Filename copied."); });
+  $("dCopyLink").addEventListener("click", function () {
+    var li = ($("dLi").value || "").trim(); if (!li) { toast("This document has no LI number to link to."); return; }
+    copyText(location.href.split("#")[0] + "#" + encodeURIComponent(li), "Link copied.");
+  });
   document.querySelectorAll("[data-close]").forEach(function (b) { b.addEventListener("click", closeOverlays); });
   $("diffClose").addEventListener("click", function () { vSeq++; vCleanDocs(); $("diffOverlay").classList.remove("show"); });
   document.querySelectorAll(".overlay").forEach(function (o) { o.addEventListener("click", function (e) { if (e.target !== o) return; if (o.id === "diffOverlay") { vSeq++; o.classList.remove("show"); } else closeOverlays(); }); });
@@ -1770,6 +1819,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   // ---------- boot ----------
   openDB().then(function (db) { DB = db; if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); return refresh(); }).then(function () {
     if (!docs.length) $("importOverlay").classList.add("show");
+    openFromHash(); // deep-link: open the document named in #LI… if present
     return Promise.all([resumeAutosave(), resumeSyncDir()]);
   }).catch(function (e) { $("empty").innerHTML = '<div class="empty">Couldn\'t open the local database.<br><span class="muted">' + esc(e && e.message) + "</span></div>"; });
 })();

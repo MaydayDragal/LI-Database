@@ -82,6 +82,12 @@ not share or upload any documents.
   from the Validity field, e.g. *Model 205*); click any column to sort.
 - **Referenced documents** — when a bulletin cites other LI numbers in its text, the document
   view lists them as chips: click one to jump to that document (dimmed if you don't have it).
+  A **← Back** button returns you to the document you came from (it walks back through a whole
+  chain of references).
+- **Copy & link** — from the document view, copy the **LI number**, the **renamed filename**, or
+  a **🔗 Link** that opens straight to that document. The URL always reflects the open document
+  (`…/#LI54.10-P-071499`), so you can bookmark or share it — opening such a link jumps right to
+  the document.
 - **⚠ Needs review** — a toolbar toggle that shows only documents the parser left incomplete
   (missing LI number, title, function group or date, or a file it couldn't read) so you can
   find and fix them.
