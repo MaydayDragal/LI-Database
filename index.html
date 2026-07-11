@@ -553,18 +553,26 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   // a free worker when all are busy; tessFreeAll() releases the memory.
   var TESS_MAX = Math.max(1, Math.min((navigator.hardwareConcurrency || 4) - 1, 4));
   var tessAll = [], tessIdle = [], tessWaiters = [], tessReserved = 0;
+  // Acquire is gated on loadTess() FIRST: if the engine can't load (offline),
+  // every request rejects promptly instead of some of them queuing as waiters
+  // that would never be resolved — which previously hung an import of more
+  // scanned files than there are worker slots.
   function tessAcquire() {
     if (tessIdle.length) return Promise.resolve(tessIdle.pop());
-    if (tessReserved < TESS_MAX) {
-      tessReserved++;
-      return loadTess()
-        .then(function (T) { return T.createWorker("eng", 1, { workerPath: T_WORK, corePath: T_CORE, langPath: T_LANG }); })
-        .then(function (w) { tessAll.push(w); return w; }, function (e) { tessReserved--; throw e; });
-    }
-    return new Promise(function (res) { tessWaiters.push(res); });
+    return loadTess().then(function (T) {
+      if (tessIdle.length) return tessIdle.pop();
+      if (tessReserved < TESS_MAX) {
+        tessReserved++;
+        return T.createWorker("eng", 1, { workerPath: T_WORK, corePath: T_CORE, langPath: T_LANG })
+          .then(function (w) { tessAll.push(w); return w; }, function (e) { tessReserved--; wakeSlot(); throw e; });
+      }
+      return new Promise(function (res, rej) { tessWaiters.push({ res: res, rej: rej }); });
+    });
   }
-  function tessRelease(w) { if (!w) return; var f = tessWaiters.shift(); if (f) f(w); else tessIdle.push(w); }
-  function tessFreeAll() { var ws = tessAll; tessAll = []; tessIdle = []; tessWaiters = []; tessReserved = 0; ws.forEach(function (w) { try { w.terminate(); } catch (e) {} }); }
+  function tessRelease(w) { if (!w) return; var f = tessWaiters.shift(); if (f) f.res(w); else tessIdle.push(w); }
+  // A reserved slot was freed without producing a worker — let a waiter retry it.
+  function wakeSlot() { var f = tessWaiters.shift(); if (f) tessAcquire().then(f.res, f.rej); }
+  function tessFreeAll() { var waiters = tessWaiters; tessWaiters = []; waiters.forEach(function (f) { try { f.rej(new Error("OCR cancelled")); } catch (e) {} }); var ws = tessAll; tessAll = []; tessIdle = []; tessReserved = 0; ws.forEach(function (w) { try { w.terminate(); } catch (e) {} }); }
   // Recognize the first pages of a doc with the given worker.
   function ocrPages(doc, w) {
     var pages = Math.min(doc.numPages, 2), text = "", lines = [], i = 1;
