@@ -35,7 +35,7 @@
   .btn-danger { background:transparent; color:var(--danger); border:1px solid var(--border); }
   .btn-danger:hover { border-color:var(--danger); }
   .btn-sm { padding:6px 11px; font-size:12.5px; }
-  #autosaveBtn.on { color:var(--accent-2); border-color:var(--accent-2); }
+  #autosaveBtn.on, #syncBtn.on { color:var(--accent-2); border-color:var(--accent-2); }
   #autosaveBtn.warn { color:#f5c542; border-color:#f5c542; }
   .inst-h { font-size:13px; margin:16px 0 6px; }
   .cmdrow { display:flex; gap:6px; margin:6px 0; }
@@ -157,6 +157,7 @@
   <div class="actions">
     <button class="btn btn-primary" id="importBtn">＋ Import PDFs</button>
     <button class="btn btn-ghost btn-sm" id="exportSelBtn">⬇ Export renamed (ZIP)</button>
+    <button class="btn btn-ghost btn-sm" id="syncBtn" title="Link a folder — one click imports any new or changed PDFs from it">📂 Sync folder</button>
     <button class="btn btn-ghost btn-sm" id="autosaveBtn" title="Automatically save the database to a file you choose (e.g. on a flash drive) after every change">🔄 Auto-save: off</button>
     <button class="btn btn-ghost btn-sm" id="backupBtn">💾 Backup</button>
     <button class="btn btn-ghost btn-sm" id="restoreBtn">↥ Restore</button>
@@ -1591,10 +1592,76 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }).catch(function () { toast("Couldn't read that backup."); });
   });
 
+  // ---------- folder sync (optional) ----------
+  // Link a folder once; one click then imports any new or changed PDFs from it.
+  // Manual Import still works exactly as before — this is purely additive.
+  var syncDir = null;
+  function syncLabel() {
+    var b = $("syncBtn");
+    if (syncDir) { b.textContent = "📂 Sync: " + (syncDir.name || "folder"); b.classList.add("on"); b.title = "Re-scan “" + (syncDir.name || "folder") + "” and import new or changed PDFs (hold Shift to link a different folder)"; }
+    else { b.textContent = "📂 Sync folder"; b.classList.remove("on"); b.title = "Link a folder — one click imports any new or changed PDFs from it"; }
+  }
+  function pickSyncDir() {
+    if (!window.showDirectoryPicker) { toast("Folder sync needs Microsoft Edge or Chrome."); return Promise.resolve(null); }
+    return window.showDirectoryPicker({ id: "li-sync", mode: "read" }).then(function (h) {
+      syncDir = h; putSetting("syncDir", h).catch(function () {}); syncLabel(); return h;
+    }, function () { return null; });
+  }
+  // Recursively gather .pdf file handles (bounded depth so a huge tree can't hang).
+  function collectPdfs(dir, out, depth) {
+    out = out || []; depth = depth || 0;
+    if (depth > 8 || out.length > 20000) return Promise.resolve(out);
+    var it = dir.values();
+    function step() {
+      return it.next().then(function (res) {
+        if (res.done) return out;
+        var entry = res.value;
+        if (entry.kind === "file") { if (/\.pdf$/i.test(entry.name)) out.push(entry); return step(); }
+        if (entry.kind === "directory") return collectPdfs(entry, out, depth + 1).then(step);
+        return step();
+      });
+    }
+    return step();
+  }
+  function ensureSyncPerm() {
+    if (!syncDir) return Promise.resolve(false);
+    var q = syncDir.queryPermission ? syncDir.queryPermission({ mode: "read" }) : Promise.resolve("granted");
+    return q.then(function (p) {
+      if (p === "granted") return true;
+      return (syncDir.requestPermission ? syncDir.requestPermission({ mode: "read" }) : Promise.resolve("denied")).then(function (p2) { return p2 === "granted"; });
+    });
+  }
+  function runSync() {
+    if (importing) { toast("An import is already running — wait for it to finish."); return; }
+    if (!syncDir) { pickSyncDir().then(function (h) { if (h) runSync(); }); return; }
+    ensureSyncPerm().then(function (ok) {
+      if (!ok) { toast("Couldn't access that folder — link it again."); syncDir = null; syncLabel(); return; }
+      toast("Scanning “" + (syncDir.name || "folder") + "”…");
+      return collectPdfs(syncDir, []).then(function (handles) {
+        // "Already imported" = a stored doc with the same filename + size.
+        var known = {}; docs.forEach(function (d) { known[d.filename + "|" + d.size] = 1; });
+        var files = [], i = 0;
+        (function next() {
+          if (i >= handles.length) {
+            if (!files.length) { toast("“" + (syncDir.name || "folder") + "” is up to date — nothing new."); return; }
+            importFiles(files); // reuses dedupe + edit-preservation
+            return;
+          }
+          handles[i].getFile().then(function (f) { if (!known[f.name + "|" + f.size]) files.push(f); }, function () {}).then(function () { i++; next(); });
+        })();
+      });
+    }).catch(function () { toast("Folder sync failed."); });
+  }
+  $("syncBtn").addEventListener("click", function (e) {
+    if (e.shiftKey) { pickSyncDir().then(function (h) { if (h) runSync(); }); return; }
+    runSync();
+  });
+  function resumeSyncDir() { return getSetting("syncDir").then(function (h) { if (h) syncDir = h; syncLabel(); }, function () { syncLabel(); }); }
+
   // ---------- boot ----------
   openDB().then(function (db) { DB = db; if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); return refresh(); }).then(function () {
     if (!docs.length) $("importOverlay").classList.add("show");
-    return resumeAutosave();
+    return Promise.all([resumeAutosave(), resumeSyncDir()]);
   }).catch(function (e) { $("empty").innerHTML = '<div class="empty">Couldn\'t open the local database.<br><span class="muted">' + esc(e && e.message) + "</span></div>"; });
 })();
 </script>

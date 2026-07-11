@@ -71,7 +71,12 @@ not share or upload any documents.
 - **Import** — click **＋ Import PDFs**, then drop files in or tick *"Pick a whole folder"*
   to select your entire LI folder at once. It reads each PDF and adds it to the database.
   Re-importing the same LI number + version just updates that entry (no duplicates), and
-  any manual corrections you made to its title/details are kept.
+  any manual corrections you made to its title/details are kept. Imports run across multiple
+  CPU cores, and scanned PDFs are OCR-read automatically.
+- **📂 Sync folder** *(optional; Edge/Chrome)* — link your LI folder once, then click it any
+  time to import just the **new or changed** PDFs from that folder (unchanged files are
+  skipped, so it's fast). Hold **Shift** and click to link a different folder. Manual import
+  still works exactly as before — this is an add-on, not a replacement.
 - **Search / filter** — type in the search box (matches LI number, title, function group, or
   the full text of the document). Filter by function group; click any column to sort.
 - **Star favorites** — click the ☆ in a row (or in the document view's header) to mark documents
