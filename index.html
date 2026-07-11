@@ -178,6 +178,7 @@
     <input type="text" id="search" placeholder="Search LI number, title, function group, or full text…" />
   </label>
   <select id="fgFilter"><option value="">All function groups</option></select>
+  <select id="modelFilter" title="Filter by model series (from Validity)"><option value="">All models</option></select>
   <button class="btn btn-ghost btn-sm" id="starFilter" title="Show starred only">☆ Starred</button>
   <span class="count" id="count"></span>
   <button class="btn btn-ghost btn-sm" id="selAll">Select all</button>
@@ -649,6 +650,23 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     Object.keys(fgs).sort().forEach(function (g) { var o = document.createElement("option"); o.value = g; o.textContent = g.length > 46 ? g.slice(0, 46) + "…" : g; sel.appendChild(o); });
     sel.value = cur;
     if (sel.value !== cur) { sel.value = ""; applyView(); }
+    // model-series filter options
+    var mods = {}; docs.forEach(function (d) { modelsOf(d).forEach(function (m) { mods[m] = 1; }); });
+    var msel = $("modelFilter"), mcur = msel.value; msel.innerHTML = '<option value="">All models</option>';
+    Object.keys(mods).sort(function (a, b) { return (+a) - (+b); }).forEach(function (m) { var o = document.createElement("option"); o.value = m; o.textContent = "Model " + m; msel.appendChild(o); });
+    msel.value = mcur;
+    if (msel.value !== mcur) { msel.value = ""; }
+  }
+  // Model series a document applies to, parsed from its Validity field:
+  // explicit "MODEL 166" / "Model series 221", plus bare comma-listed 3-digit
+  // series ("118, 177, 247, …"). Codes (489, letter-suffixed like 101A) are
+  // not comma-list members, so they're not picked up.
+  function modelsOf(d) {
+    var s = d.validity || "", seen = {}, out = [], m;
+    function add(k) { if (/^\d{3}$/.test(k) && !seen[k]) { seen[k] = 1; out.push(k); } }
+    var re1 = /model(?:\s+series)?\s+(\d{3})\b/gi; while ((m = re1.exec(s))) add(m[1]);
+    var re2 = /(?:^|,)\s*(\d{3})\s*(?=,|$)/g; while ((m = re2.exec(s))) add(m[1]);
+    return out;
   }
   function verNum(d) { return parseFloat(d.ver) || 0; }
   function isStarred(g) { return g.versions.some(function (v) { return v.star; }); }
@@ -660,13 +678,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return order.map(function (k) { return map[k]; });
   }
   function applyView() {
-    var q = $("search").value.trim().toLowerCase(), fg = $("fgFilter").value;
+    var q = $("search").value.trim().toLowerCase(), fg = $("fgFilter").value, model = $("modelFilter").value;
     var groups = groupDocs(docs);
     groupsByKey = {}; groups.forEach(function (g) { groupsByKey[g.key] = g; });
     Object.keys(selected).forEach(function (k) { if (!groupsByKey[k]) delete selected[k]; });
     view = groups.filter(function (g) {
       if (starOnly && !isStarred(g)) return false;
       if (fg && !g.versions.some(function (d) { return d.fgroup === fg; })) return false;
+      if (model && !g.versions.some(function (d) { return modelsOf(d).indexOf(model) !== -1; })) return false;
       if (!q) return true;
       return g.versions.some(function (d) { return (d.li + " " + d.title + " " + d.fgroup + " " + (d.reason || "") + " " + d.text).toLowerCase().indexOf(q) !== -1; });
     });
@@ -704,6 +723,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   $("head").addEventListener("click", function (e) { var th = e.target.closest("th[data-c]"); if (!th) return; var c = th.getAttribute("data-c"); if (c === "sel") return; if (sortCol === c) sortDir = -sortDir; else { sortCol = c; sortDir = 1; } applyView(); });
   $("search").addEventListener("input", applyView);
   $("fgFilter").addEventListener("change", applyView);
+  $("modelFilter").addEventListener("change", applyView);
   $("rows").addEventListener("click", function (e) {
     var tr = e.target.closest("tr[data-key]"); if (!tr) return; var key = tr.getAttribute("data-key");
     if (e.target.classList.contains("rowchk")) { if (e.target.checked) selected[key] = 1; else delete selected[key]; tr.classList.toggle("sel", !!selected[key]); return; }

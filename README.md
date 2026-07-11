@@ -78,7 +78,10 @@ not share or upload any documents.
   skipped, so it's fast). Hold **Shift** and click to link a different folder. Manual import
   still works exactly as before — this is an add-on, not a replacement.
 - **Search / filter** — type in the search box (matches LI number, title, function group, or
-  the full text of the document). Filter by function group; click any column to sort.
+  the full text of the document). Filter by **function group** or by **model series** (parsed
+  from the Validity field, e.g. *Model 205*); click any column to sort.
+- **Referenced documents** — when a bulletin cites other LI numbers in its text, the document
+  view lists them as chips: click one to jump to that document (dimmed if you don't have it).
 - **Star favorites** — click the ☆ in a row (or in the document view's header) to mark documents
   you use often. The **★ Starred** toolbar button filters to just your favorites, the ★ column
   header sorts starred first, and stars are saved with the database (they survive re-imports
