@@ -107,6 +107,13 @@
   .meta-actions { display:flex; gap:7px; flex-wrap:wrap; }
   .cmp { border-top:1px solid var(--border); margin-top:15px; padding-top:14px; }
   .cmp h3 { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 10px; }
+  .refs { border-top:1px solid var(--border); margin-top:15px; padding-top:14px; }
+  .refs h3 { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 10px; }
+  .refchips { display:flex; flex-wrap:wrap; gap:6px; }
+  .refchip { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; padding:4px 9px; border-radius:6px; border:1px solid var(--border); background:var(--panel-2); white-space:nowrap; }
+  .refchip.have { color:var(--accent); cursor:pointer; }
+  .refchip.have:hover { border-color:var(--accent); }
+  .refchip.miss { color:var(--muted); opacity:.65; }
   .cmp .row2 { display:flex; gap:7px; align-items:center; margin-bottom:10px; }
   .cmp select { flex:1; background:var(--panel-2); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:7px 8px; font-size:12.5px; }
   .diff-out { border:1px solid var(--border); border-radius:10px; overflow:auto; }
@@ -236,6 +243,10 @@
           <button class="btn btn-ghost btn-sm" id="dDownloadOrig">Original</button>
           <button class="btn btn-ghost btn-sm" id="dReread" title="Re-extract the fields from the stored PDF (keeps fields you edited by hand)">↻ Re-read PDF</button>
           <button class="btn btn-danger btn-sm" id="dDelete">Delete</button>
+        </div>
+        <div class="refs" id="dRefs" style="display:none">
+          <h3>Referenced documents</h3>
+          <div class="refchips" id="dRefChips"></div>
         </div>
         <div class="cmp" id="dCmp" style="display:none">
           <h3>Compare versions</h3>
@@ -748,8 +759,38 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     $("dLi").value = d.li || ""; $("dVer").value = d.ver || ""; $("dTitleIn").value = d.title || "";
     $("dReason").value = d.reason || ""; $("dFg").value = d.fgroup || ""; $("dDate").value = d.date || ""; $("dValid").value = d.validity || "";
     updNewName();
+    renderRefs(d);
     dDirty = false;
     getFile(d.id).then(function (blob) { if (curDoc !== d || !$("detailOverlay").classList.contains("show")) return; if (curUrl) URL.revokeObjectURL(curUrl); curUrl = blob ? URL.createObjectURL(asPdf(blob)) : null; $("dFrame").src = curUrl || "about:blank"; });
+  }
+  // Other LI documents cited in this one's text/reason — shown as chips that
+  // jump to that document if it's in the library.
+  function findRefs(d) {
+    var hay = (d.reason || "") + "\n" + (d.text || "");
+    var re = /\b[A-Z]{2}\d{2}\.\d{2}-[A-Z]-\d{5,7}\b/g, m, seen = {}, out = [], self = (d.li || "").toUpperCase();
+    while ((m = re.exec(hay))) { var x = m[0].toUpperCase(); if (x === self || seen[x]) continue; seen[x] = 1; out.push(x); }
+    return out;
+  }
+  function renderRefs(d) {
+    var refs = findRefs(d), box = $("dRefs"), chips = $("dRefChips");
+    chips.innerHTML = "";
+    if (!refs.length) { box.style.display = "none"; return; }
+    refs.forEach(function (li) {
+      var have = !!groupsByKey["li:" + li];
+      var el = document.createElement("span");
+      el.className = "refchip " + (have ? "have" : "miss");
+      el.textContent = li;
+      el.title = have ? "Open " + li : li + " — not in your library";
+      if (have) el.addEventListener("click", function () { openRef("li:" + li); });
+      chips.appendChild(el);
+    });
+    box.style.display = "block";
+  }
+  function openRef(key) {
+    if (!groupsByKey[key]) { toast("That document isn't in your library."); return; }
+    if (dDirty && !confirm("Discard unsaved changes to this document?")) return;
+    dDirty = false;
+    openDetail(key);
   }
   $("dVerSel").addEventListener("change", function () { loadVersion(+this.value); });
   function collectDetail() { return { li: $("dLi").value, ver: $("dVer").value, title: $("dTitleIn").value, reason: $("dReason").value, fgroup: $("dFg").value, date: $("dDate").value, validity: $("dValid").value }; }
