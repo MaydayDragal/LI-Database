@@ -427,7 +427,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   // ---------- filename rules (Windows-safe) ----------
   var WIN_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
-  function sanitize(s) { return String(s || "").replace(/[\x00-\x1f\x7f]/g, "").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim(); }
+  // Strip control chars, Unicode bidi/format controls (RLO U+202E etc. — used to
+  // spoof extensions in filenames), and Windows-illegal path characters.
+  function sanitize(s) { return String(s || "").replace(/[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim(); }
   function cleanTitle(s) { return sanitize(String(s || "").replace(/[‘’ʼ′]/g, "'").replace(/[“”″]/g, '"')).replace(/[.\s]+$/, "").trim(); }
   function rlName(d) {
     var li = sanitize(d.li), ver = String(d.ver || "").trim().replace(/[^0-9]/g, ""), title = cleanTitle(d.title);
@@ -972,7 +974,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   function asPdf(blob) { return (blob && blob.type === "application/pdf") ? blob : new Blob([blob], { type: "application/pdf" }); }
   function dlBlob(blob, name) { var u = URL.createObjectURL(blob), a = document.createElement("a"); a.href = u; a.download = name; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function () { URL.revokeObjectURL(u); }, 4000); }
   $("dDownload").addEventListener("click", function () { if (!curDoc) return; getFile(curDoc.id).then(function (b) { if (b) dlBlob(b, rlName(collectDetail())); }); });
-  $("dDownloadOrig").addEventListener("click", function () { if (!curDoc) return; getFile(curDoc.id).then(function (b) { if (b) dlBlob(b, curDoc.filename || rlName(collectDetail())); }); });
+  $("dDownloadOrig").addEventListener("click", function () { if (!curDoc) return; getFile(curDoc.id).then(function (b) { if (b) dlBlob(b, sanitize(curDoc.filename) || rlName(collectDetail())); }); });
   // Re-extract metadata from the stored PDF in place — lets entries imported
   // with an older extractor pick up improvements without re-importing files.
   // Re-extract a single stored doc in place, keeping hand-edited fields.
@@ -1433,10 +1435,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (!bl[0] || !bl[1]) { colA.innerHTML = colB.innerHTML = '<div class="vnote">Couldn\'t load the PDF files.</div>'; return; }
       return Promise.all([bl[0].arrayBuffer(), bl[1].arrayBuffer()]).then(function (bufs) {
         if (seq !== vSeq) return;
-        return Promise.all([pdfjsLib.getDocument({ data: bufs[0] }).promise, pdfjsLib.getDocument({ data: bufs[1] }).promise]);
+        // Tolerate one side failing to parse so the other's loaded proxy is
+        // still destroyed rather than leaked.
+        return Promise.all([pdfjsLib.getDocument({ data: bufs[0] }).promise.catch(function () { return null; }), pdfjsLib.getDocument({ data: bufs[1] }).promise.catch(function () { return null; })]);
       }).then(function (pdfs) {
         if (!pdfs) return;
-        if (seq !== vSeq) { pdfs.forEach(function (d) { try { d.destroy(); } catch (e) {} }); return; }
+        if (seq !== vSeq || !pdfs[0] || !pdfs[1]) {
+          pdfs.forEach(function (d) { if (d) try { d.destroy(); } catch (e) {} });
+          if (seq === vSeq) colA.innerHTML = colB.innerHTML = '<div class="vnote">Couldn\'t render the pages.</div>';
+          return;
+        }
         vDocs = pdfs.slice();
         colA.innerHTML = ""; colB.innerHTML = "";
         return Promise.all([renderSide(pdfs[0], colA, seq), renderSide(pdfs[1], colB, seq)]);
@@ -1757,7 +1765,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     if (!keys.length && !confirm("Export the latest version of all " + list.length + " shown document(s) as a renamed ZIP?")) return;
     var zip = new JSZip(), used = {}, i = 0;
     (function next() {
-      if (i >= list.length) { toast("Zipping…"); zip.generateAsync({ type: "blob", compression: "STORE" }).then(function (b) { dlBlob(b, "LI_documents.zip"); }); return; }
+      if (i >= list.length) { toast("Zipping…"); zip.generateAsync({ type: "blob", compression: "STORE" }).then(function (b) { dlBlob(b, "LI_documents.zip"); }, function () { toast("Couldn't build the export."); }); return; }
       var d = list[i];
       getFile(d.id).then(function (blob) { if (blob) { var n = rlName(d), k = 2, base = n.replace(/\.pdf$/i, ""); while (used[n]) { n = base + " (" + k + ").pdf"; k++; } used[n] = true; zip.file(n, blob); } i++; next(); });
     })();
