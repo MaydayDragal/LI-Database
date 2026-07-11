@@ -462,10 +462,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   // Start of any labeled field/section — used to know where a wrapped
   // multi-line field value ends.
   var LABEL_RE = /^(topic\s*number|version\b|(?:function|design)\s*group|date\b|validity\b|reason\s*for\s*change|complaint\b|cause\b|remedy\b|symptoms?\b|attachments?\b|control\s*unit|fault\s*text|operation\s*(numbers?|text)|damage\s*code|parts\b|note\b|work\s*instruction|document\s*number|dokument)/i;
-  function fieldFromLines(lines, re, multi) {
+  // A field value must actually look like a date — guards against a wrapped
+  // title line that happens to start with the word "date" (e.g. "date, time
+  // on the analog clock cannot be altered") being taken as the Date field.
+  var DATE_VAL = /\d{1,4}[.\/-]\d{1,2}([.\/-]\d{1,4})?/;
+  function fieldFromLines(lines, re, multi, valid) {
     for (var i = 0; i < lines.length; i++) {
       if (!re.test(lines[i].text)) continue;
       var v = lines[i].text.replace(re, "").trim();
+      if (valid && !valid(v)) continue; // wrong line (e.g. a "date,…" title) — keep scanning
       if (multi) {
         // a long value (e.g. a Validity model list) wraps onto extra lines —
         // append until the next labeled field or header starts
@@ -550,7 +555,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           return {
             li: li, ver: detectVersion(hay, li), title: detectTitle(p1, flat, li),
             reason: fieldFromLines(p1, /^reason\s*for\s*change\s*/i, true),
-            fgroup: fieldFromLines(p1, /^(?:function|design)\s*group\s*/i), date: fieldFromLines(p1, /^date\s*/i),
+            fgroup: fieldFromLines(p1, /^(?:function|design)\s*group\s*/i), date: fieldFromLines(p1, /^date\s*/i, false, function (v) { return DATE_VAL.test(v); }),
             validity: fieldFromLines(p1, /^validity\s*/i, true), text: lineText, pages: doc.numPages, ocr: ocr, noText: false
           };
         }
