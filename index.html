@@ -449,7 +449,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     var st = titleFromStructure(lines, li); if (st && st.length >= 4) return cleanTitle(st);
     if (lines && lines.length) {
       var maxH = 0; lines.forEach(function (it) { if (it.h > maxH) maxH = it.h; });
-      var big = lines.filter(function (it) { return it.h >= maxH - 0.4 && (it.text || "").trim().length > 2 && !DOCNUM.test(it.text) && !HEADER_RE.test(it.text) && !/^(version|revision|seite|page|datum|date|validity|function\s*group)\b/i.test((it.text || "").trim()); });
+      var big = lines.filter(function (it) { return it.h >= maxH - 0.4 && (it.text || "").trim().length > 2 && !DOCNUM.test(it.text) && !HEADER_RE.test(it.text) && !/^(version|revision|seite|page|datum|date|validity|(?:function|design)\s*group)\b/i.test((it.text || "").trim()); });
       var joined = cleanTitle(big.map(function (it) { return (it.text || "").trim(); }).join(" "));
       if (joined.length >= 4) return joined;
     }
@@ -458,7 +458,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   }
   // Start of any labeled field/section — used to know where a wrapped
   // multi-line field value ends.
-  var LABEL_RE = /^(topic\s*number|version\b|function\s*group|date\b|validity\b|reason\s*for\s*change|complaint\b|cause\b|remedy\b|symptoms?\b|attachments?\b|control\s*unit|fault\s*text|operation\s*(numbers?|text)|damage\s*code|parts\b|note\b|work\s*instruction|document\s*number|dokument)/i;
+  var LABEL_RE = /^(topic\s*number|version\b|(?:function|design)\s*group|date\b|validity\b|reason\s*for\s*change|complaint\b|cause\b|remedy\b|symptoms?\b|attachments?\b|control\s*unit|fault\s*text|operation\s*(numbers?|text)|damage\s*code|parts\b|note\b|work\s*instruction|document\s*number|dokument)/i;
   function fieldFromLines(lines, re, multi) {
     for (var i = 0; i < lines.length; i++) {
       if (!re.test(lines[i].text)) continue;
@@ -547,7 +547,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           return {
             li: li, ver: detectVersion(hay, li), title: detectTitle(p1, flat, li),
             reason: fieldFromLines(p1, /^reason\s*for\s*change\s*/i, true),
-            fgroup: fieldFromLines(p1, /^function\s*group\s*/i), date: fieldFromLines(p1, /^date\s*/i),
+            fgroup: fieldFromLines(p1, /^(?:function|design)\s*group\s*/i), date: fieldFromLines(p1, /^date\s*/i),
             validity: fieldFromLines(p1, /^validity\s*/i, true), text: lineText, pages: doc.numPages, ocr: ocr, noText: false
           };
         }
